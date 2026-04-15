@@ -8,6 +8,7 @@ use Illuminate\Http\Request;
 
 class ProductController extends Controller
 {
+    //test comment
     public function index(Request $request)
     {
         $query = Product::with(['brand', 'category'])
