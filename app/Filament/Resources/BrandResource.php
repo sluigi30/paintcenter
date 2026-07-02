@@ -4,25 +4,25 @@ namespace App\Filament\Resources;
 
 use App\Filament\Resources\BrandResource\Pages;
 use App\Models\Brand;
-use Filament\Actions\DeleteAction;
-use Filament\Actions\EditAction;
+use Filament\Actions\Action;
+use Filament\Forms\Components\TextInput;
 use Filament\Resources\Resource;
 use Filament\Schemas\Schema;
-use Filament\Tables\Actions\BulkActionGroup;
-use Filament\Tables\Actions\DeleteBulkAction;
 use Filament\Tables\Columns\TextColumn;
+use Filament\Tables\Filters\SelectFilter;
 use Filament\Tables\Table;
 
 class BrandResource extends Resource
 {
     protected static ?string $model = Brand::class;
-    protected static string | \BackedEnum | null $navigationIcon = 'heroicon-o-cube';
-    protected static string | \UnitEnum | null $navigationGroup = 'Store Management';
+    protected static string|\BackedEnum|null $navigationIcon = 'heroicon-o-building-storefront';
+    protected static string|\UnitEnum|null $navigationGroup = 'Store Management';
+    protected static ?int $navigationSort = 2;
 
     public static function form(Schema $schema): Schema
     {
         return $schema->components([
-            \Filament\Forms\Components\TextInput::make('brand_name')
+            TextInput::make('brand_name')
                 ->required()
                 ->maxLength(255)
                 ->label('Brand Name'),
@@ -41,18 +41,45 @@ class BrandResource extends Resource
                     ->label('Products')
                     ->counts('products')
                     ->sortable(),
+                TextColumn::make('is_archived')
+                    ->label('Status')
+                    ->badge()
+                    ->formatStateUsing(fn ($state) => $state ? 'Archived' : 'Active')
+                    ->color(fn ($state) => $state ? 'gray' : 'success'),
                 TextColumn::make('created_at')
                     ->label('Created')
                     ->dateTime()
                     ->sortable(),
             ])
+            ->filters([
+                SelectFilter::make('is_archived')
+                    ->label('Status')
+                    ->options([
+                        '0' => 'Active only',
+                        '1' => 'Archived only',
+                    ]),
+            ])
             ->actions([
                 \Filament\Actions\EditAction::make(),
-                \Filament\Actions\DeleteAction::make(),
+                Action::make('toggleArchive')
+                    ->label(fn (Brand $record) => $record->is_archived ? 'Unarchive' : 'Archive')
+                    ->icon(fn (Brand $record) => $record->is_archived ? 'heroicon-o-arrow-uturn-left' : 'heroicon-o-archive-box')
+                    ->color(fn (Brand $record) => $record->is_archived ? 'success' : 'warning')
+                    ->requiresConfirmation()
+                    ->modalHeading(fn (Brand $record) => $record->is_archived ? 'Unarchive Brand' : 'Archive Brand')
+                    ->modalDescription(fn (Brand $record) => $record->is_archived
+                        ? 'This will make the brand active again.'
+                        : 'This will hide the brand from the store. You can unarchive it anytime.')
+                    ->action(fn (Brand $record) => $record->update(['is_archived' => !$record->is_archived])),
             ])
             ->bulkActions([
                 \Filament\Actions\BulkActionGroup::make([
-                    \Filament\Actions\DeleteBulkAction::make(),
+                    \Filament\Actions\BulkAction::make('archiveSelected')
+                        ->label('Archive selected')
+                        ->icon('heroicon-o-archive-box')
+                        ->color('warning')
+                        ->requiresConfirmation()
+                        ->action(fn ($records) => $records->each->update(['is_archived' => true])),
                 ]),
             ]);
     }

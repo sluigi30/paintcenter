@@ -26,8 +26,8 @@ class InventoryResource extends Resource
     protected static ?string $modelLabel = 'Inventory Item';
     protected static ?string $pluralModelLabel = 'Inventory';
     protected static ?int $navigationSort = 2;
-    protected static \UnitEnum|string|null $navigationGroup = 'Store Management';
-    protected static \BackedEnum|string|null $navigationIcon = 'heroicon-o-archive-box';
+    protected static \UnitEnum|string|null $navigationGroup = 'Operations';
+    protected static \BackedEnum|string|null $navigationIcon = 'heroicon-o-inbox-stack';
     // -------------------------------------------------------
     // Form — used when editing the low_stock_threshold
     // -------------------------------------------------------

@@ -24,6 +24,9 @@ use Illuminate\Support\Facades\Notification;
 class ProductResource extends Resource
 {
     protected static ?string $model = Product::class;
+    protected static string|\BackedEnum|null $navigationIcon = 'heroicon-o-swatch';
+    protected static string|\UnitEnum|null $navigationGroup = 'Store Management';
+    protected static ?int $navigationSort = 1;
 
     public static function form(Schema $schema): Schema
     {
@@ -72,7 +75,7 @@ class ProductResource extends Resource
                 ->columnSpanFull(),
         ]);
     }
-
+    //test comment
     public static function table(Table $table): Table
     {
         return $table

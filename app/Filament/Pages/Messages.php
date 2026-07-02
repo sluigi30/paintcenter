@@ -12,7 +12,7 @@ class Messages extends Page
     protected string $view = 'filament.pages.messages';
     protected static ?string $title = 'Messages';
     protected static ?string $navigationLabel = 'Messages';
-    protected static string | \BackedEnum | null $navigationIcon = 'heroicon-o-cube';
+    protected static string|\BackedEnum|null $navigationIcon = 'heroicon-o-chat-bubble-left-right';
 
     public ?int $selectedUserId = null;
     public string $newMessage = '';
