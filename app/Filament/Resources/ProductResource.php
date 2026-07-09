@@ -19,6 +19,7 @@ use Filament\Tables\Columns\TextColumn;
 use Filament\Tables\Filters\SelectFilter;
 use Filament\Tables\Filters\TernaryFilter;
 use Filament\Tables\Table;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Facades\Notification;
 
 class ProductResource extends Resource
@@ -111,6 +112,22 @@ class ProductResource extends Resource
                     ->color(fn ($state) => $state ? 'gray' : 'success'),
             ])
             ->filters([
+                SelectFilter::make('stock_status')
+                    ->label('Stock Level')
+                    ->options([
+                        'attention'    => 'Needs Attention (Low + Out)',
+                        'out_of_stock' => 'Out of Stock',
+                        'low_stock'    => 'Low Stock',
+                        'in_stock'     => 'Healthy',
+                    ])
+                    ->query(fn (Builder $query, array $data) => match ($data['value'] ?? null) {
+                        'attention'    => $query->lowStock(),
+                        'out_of_stock' => $query->outOfStock(),
+                        'low_stock'    => $query->lowStock()->where('stock', '>', 0),
+                        'in_stock'     => $query->whereColumn('stock', '>', 'low_stock_threshold'),
+                        default        => $query,
+                    }),
+
                 SelectFilter::make('brand')
                     ->relationship('brand', 'brand_name'),
                 SelectFilter::make('category')

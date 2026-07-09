@@ -9,9 +9,14 @@ use Filament\Schemas\Schema;
 use Filament\Forms\Components\Select;
 use Filament\Forms\Components\TextInput;
 use Filament\Forms\Components\Textarea;
+use Filament\Forms\Components\DatePicker;
 use Filament\Tables\Columns\TextColumn;
+use Filament\Tables\Filters\Filter;
+use Filament\Tables\Filters\Indicator;
 use Filament\Tables\Filters\SelectFilter;
 use Filament\Tables\Table;
+use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Support\Carbon;
 
 class OrderResource extends Resource
 {
@@ -120,7 +125,39 @@ class OrderResource extends Resource
                         'delivery' => 'Delivery',
                         'pickup'   => 'Pickup',
                     ]),
+                Filter::make('created_at')
+                    ->label('Order Date')
+                    ->schema([
+                        DatePicker::make('created_from')
+                            ->label('From')
+                            ->native(false)
+                            ->maxDate(now()),
+                        DatePicker::make('created_until')
+                            ->label('Until')
+                            ->native(false)
+                            ->maxDate(now()),
+                    ])
+                    ->columns(2)
+                    ->columnSpan(2)
+                    ->query(fn (Builder $query, array $data): Builder => $query
+                        ->when($data['created_from'] ?? null,
+                            fn (Builder $q, $date) => $q->whereDate('created_at', '>=', $date))
+                        ->when($data['created_until'] ?? null,
+                            fn (Builder $q, $date) => $q->whereDate('created_at', '<=', $date)))
+                    ->indicateUsing(function (array $data): array {
+                        $indicators = [];
+                        if ($data['created_from'] ?? null) {
+                            $indicators[] = Indicator::make('From ' . Carbon::parse($data['created_from'])->format('M d, Y'))
+                                ->removeField('created_from');
+                        }
+                        if ($data['created_until'] ?? null) {
+                            $indicators[] = Indicator::make('Until ' . Carbon::parse($data['created_until'])->format('M d, Y'))
+                                ->removeField('created_until');
+                        }
+                        return $indicators;
+                    }),
             ])
+            ->filtersFormColumns(2)
            ->actions([
                 \Filament\Actions\EditAction::make(),
             ])

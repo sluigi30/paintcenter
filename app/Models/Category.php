@@ -11,6 +11,7 @@ class Category extends Model
 
     protected $fillable = [
         'category_name',
+        'is_archived',
     ];
 
     public function products()

@@ -15,6 +15,7 @@ class User extends Authenticatable implements FilamentUser
 
     protected $fillable = [
         'role',
+        'is_archived',
         'first_name',
         'last_name',
         'phone',
@@ -54,7 +55,17 @@ class User extends Authenticatable implements FilamentUser
     }
     public function canAccessPanel(Panel $panel): bool
     {
-        return true;
+        return ($this->isAdmin() || $this->isSuperAdmin()) && !$this->is_archived;
+    }
+
+    public function isSuperAdmin(): bool
+    {
+        return $this->role === 'super_admin';
+    }
+
+    public function isAdmin(): bool
+    {
+        return $this->role === 'admin';
     }
     public function getNameAttribute(): string
     {

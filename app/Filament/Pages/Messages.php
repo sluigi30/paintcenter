@@ -19,8 +19,29 @@ class Messages extends Page
     public Collection $conversations;
     public Collection $thread;
 
+    /** All admin-side user ids — the inbox is shared across every admin. */
+    public array $adminIds = [];
+
+    public static function getNavigationBadge(): ?string
+    {
+        $adminIds = User::whereIn('role', ['admin', 'super_admin'])->pluck('id');
+
+        $unread = Message::whereIn('receiver_id', $adminIds)
+            ->whereNotIn('sender_id', $adminIds)
+            ->where('is_read', false)
+            ->count();
+
+        return $unread > 0 ? (string) $unread : null;
+    }
+
+    public static function getNavigationBadgeColor(): ?string
+    {
+        return 'danger';
+    }
+
     public function mount(): void
     {
+        $this->adminIds     = User::whereIn('role', ['admin', 'super_admin'])->pluck('id')->all();
         $this->conversations = collect();
         $this->thread        = collect();
         $this->loadConversations();
@@ -28,30 +49,34 @@ class Messages extends Page
 
     public function loadConversations(): void
     {
-        $adminId = auth()->id();
+        $adminIds = $this->adminIds;
 
-        $this->conversations = Message::where('sender_id', $adminId)
-            ->orWhere('receiver_id', $adminId)
+        $this->conversations = Message::where(function ($q) use ($adminIds) {
+                $q->whereIn('sender_id', $adminIds)
+                  ->orWhereIn('receiver_id', $adminIds);
+            })
             ->with(['sender', 'receiver'])
             ->orderBy('created_at', 'desc')
             ->get()
-            ->groupBy(function ($message) use ($adminId) {
-                return $message->sender_id === $adminId
-                    ? $message->receiver_id
-                    : $message->sender_id;
-            })
-            ->map(function ($messages, $otherUserId) use ($adminId) {
-                $latest    = $messages->first();
-                $otherUser = $latest->sender_id === $adminId
+            // Keep only customer ↔ store traffic (skip admin-to-admin notes)
+            ->reject(fn ($m) => in_array($m->sender_id, $adminIds) && in_array($m->receiver_id, $adminIds))
+            ->groupBy(fn ($m) => in_array($m->sender_id, $adminIds) ? $m->receiver_id : $m->sender_id)
+            ->map(function ($messages, $customerId) use ($adminIds) {
+                $latest   = $messages->first();
+                $customer = in_array($latest->sender_id, $adminIds)
                     ? $latest->receiver
                     : $latest->sender;
 
+                $name = $customer
+                    ? trim($customer->first_name . ' ' . $customer->last_name)
+                    : '';
+
                 return [
-                    'user_id'         => $otherUser->id,
-                    'name'            => $otherUser->first_name . ' ' . $otherUser->last_name,
+                    'user_id'         => (int) $customerId,
+                    'name'            => $name !== '' ? $name : ($customer->email ?? "Customer #{$customerId}"),
                     'last_message'    => $latest->content,
                     'last_message_at' => $latest->created_at,
-                    'unread_count'    => $messages->where('receiver_id', $adminId)
+                    'unread_count'    => $messages->whereIn('receiver_id', $adminIds)
                                                   ->where('is_read', false)
                                                   ->count(),
                 ];
@@ -59,32 +84,49 @@ class Messages extends Page
             ->values();
     }
 
-    public function selectUser(int $userId): void
+    public function loadThread(): void
     {
-        $this->selectedUserId = $userId;
-        $adminId              = auth()->id();
+        if (! $this->selectedUserId) {
+            return;
+        }
 
-        $this->thread = Message::where(function ($q) use ($adminId, $userId) {
-                $q->where('sender_id', $adminId)->where('receiver_id', $userId);
+        $adminIds = $this->adminIds;
+        $userId   = $this->selectedUserId;
+
+        $this->thread = Message::where(function ($q) use ($adminIds, $userId) {
+                $q->where('sender_id', $userId)->whereIn('receiver_id', $adminIds);
             })
-            ->orWhere(function ($q) use ($adminId, $userId) {
-                $q->where('sender_id', $userId)->where('receiver_id', $adminId);
+            ->orWhere(function ($q) use ($adminIds, $userId) {
+                $q->whereIn('sender_id', $adminIds)->where('receiver_id', $userId);
             })
+            ->with('sender')
             ->orderBy('created_at', 'asc')
             ->get();
 
-        // Mark as read
+        // The thread is on screen — mark the customer's messages as read
         Message::where('sender_id', $userId)
-            ->where('receiver_id', $adminId)
+            ->whereIn('receiver_id', $adminIds)
             ->where('is_read', false)
             ->update(['is_read' => true]);
+    }
 
+    public function selectUser(int $userId): void
+    {
+        $this->selectedUserId = $userId;
+        $this->loadThread();
         $this->loadConversations();
+    }
+
+    /** Called by wire:poll — refreshes the inbox without a page reload. */
+    public function pollMessages(): void
+    {
+        $this->loadConversations();
+        $this->loadThread();
     }
 
     public function sendMessage(): void
     {
-        if (!$this->selectedUserId || empty(trim($this->newMessage))) {
+        if (! $this->selectedUserId || empty(trim($this->newMessage))) {
             return;
         }
 
@@ -97,6 +139,7 @@ class Messages extends Page
         ]);
 
         $this->newMessage = '';
-        $this->selectUser($this->selectedUserId);
+        $this->loadThread();
+        $this->loadConversations();
     }
 }

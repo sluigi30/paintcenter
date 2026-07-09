@@ -53,13 +53,13 @@ class ProductController extends Controller
 
     public function brands()
     {
-        $brands = \App\Models\Brand::withCount('products')->get();
+        $brands = \App\Models\Brand::where('is_archived', false)->withCount('products')->get();
         return response()->json($brands);
     }
 
     public function categories()
     {
-        $categories = \App\Models\Category::withCount('products')->get();
+        $categories = \App\Models\Category::where('is_archived', false)->withCount('products')->get();
         return response()->json($categories);
     }
 }

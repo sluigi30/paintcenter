@@ -121,11 +121,6 @@ class InventoryResource extends Resource
                         default        => 'success',
                     }),
 
-                TextColumn::make('inventoryLogs_count')
-                    ->label('Adjustments')
-                    ->counts('inventoryLogs')
-                    ->alignCenter()
-                    ->color('gray'),
             ])
 
             // -------------------------------------------------------
@@ -135,12 +130,16 @@ class InventoryResource extends Resource
                 SelectFilter::make('stock_status')
                     ->label('Stock Status')
                     ->options([
+                        // 'attention' is the landing target for the login
+                        // stock alert's "Review Inventory" deep link
+                        'attention'    => 'Needs Attention (Low + Out)',
                         'in_stock'     => 'In Stock',
                         'low_stock'    => 'Low Stock',
                         'out_of_stock' => 'Out of Stock',
                     ])
                     ->query(function (Builder $query, array $data) {
                         return match ($data['value'] ?? null) {
+                            'attention'    => $query->lowStock(),
                             'low_stock'    => $query->lowStock()->where('stock', '>', 0),
                             'out_of_stock' => $query->outOfStock(),
                             'in_stock'     => $query->whereColumn('stock', '>', 'low_stock_threshold'),

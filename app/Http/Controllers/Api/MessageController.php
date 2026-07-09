@@ -9,6 +9,13 @@ use Illuminate\Http\Request;
 
 class MessageController extends Controller
 {
+    // All admin-side user ids. Archived admins are included so threads
+    // that historically went to them keep their message history.
+    private function adminIds(): array
+    {
+        return User::whereIn('role', ['admin', 'super_admin'])->pluck('id')->all();
+    }
+
     // Get all conversations for the current user
     public function conversations(Request $request)
     {
@@ -46,28 +53,41 @@ class MessageController extends Controller
         return response()->json($conversations);
     }
 
-    // Get messages between current user and another user
+    // Get the message thread between a customer and the store.
+    // The store inbox is shared: a customer's thread includes replies from
+    // ANY admin, and an admin sees the customer's messages to any admin —
+    // regardless of which specific admin account they were addressed to.
     public function thread(Request $request, $otherUserId)
     {
-        $userId = $request->user()->id;
+        $user     = $request->user();
+        $adminIds = $this->adminIds();
 
-        $messages = Message::where(function ($q) use ($userId, $otherUserId) {
-                $q->where('sender_id', $userId)
-                  ->where('receiver_id', $otherUserId);
+        $customerId = in_array($user->id, $adminIds) ? (int) $otherUserId : $user->id;
+
+        $messages = Message::where(function ($q) use ($customerId, $adminIds) {
+                $q->where('sender_id', $customerId)
+                  ->whereIn('receiver_id', $adminIds);
             })
-            ->orWhere(function ($q) use ($userId, $otherUserId) {
-                $q->where('sender_id', $otherUserId)
-                  ->where('receiver_id', $userId);
+            ->orWhere(function ($q) use ($customerId, $adminIds) {
+                $q->whereIn('sender_id', $adminIds)
+                  ->where('receiver_id', $customerId);
             })
             ->with(['sender', 'receiver'])
             ->orderBy('created_at', 'asc')
             ->get();
 
-        // Mark messages as read
-        Message::where('sender_id', $otherUserId)
-            ->where('receiver_id', $userId)
-            ->where('is_read', false)
-            ->update(['is_read' => true]);
+        // Mark incoming messages as read
+        if (in_array($user->id, $adminIds)) {
+            Message::where('sender_id', $customerId)
+                ->whereIn('receiver_id', $adminIds)
+                ->where('is_read', false)
+                ->update(['is_read' => true]);
+        } else {
+            Message::whereIn('sender_id', $adminIds)
+                ->where('receiver_id', $user->id)
+                ->where('is_read', false)
+                ->update(['is_read' => true]);
+        }
 
         return response()->json($messages);
     }
@@ -96,10 +116,14 @@ class MessageController extends Controller
         ], 201);
     }
 
-    // Get the admin user ID (so mobile app knows who to message)
+    // Get an active admin user ID (so mobile app knows who to message).
+    // Archived admins must never receive new messages.
     public function getAdmin()
     {
-        $admin = User::where('role', 'admin')->first();
+        $admin = User::whereIn('role', ['admin', 'super_admin'])
+            ->where('is_archived', false)
+            ->orderBy('id')
+            ->first();
 
         if (!$admin) {
             return response()->json(['message' => 'No admin found.'], 404);

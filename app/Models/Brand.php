@@ -11,6 +11,7 @@ class Brand extends Model
 
     protected $fillable = [
         'brand_name',
+        'is_archived',
     ];
 
     public function products()
