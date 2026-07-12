@@ -5,9 +5,11 @@ namespace App\Filament\Resources;
 use App\Filament\Resources\BrandResource\Pages;
 use App\Models\Brand;
 use Filament\Actions\Action;
+use Filament\Forms\Components\FileUpload;
 use Filament\Forms\Components\TextInput;
 use Filament\Resources\Resource;
 use Filament\Schemas\Schema;
+use Filament\Tables\Columns\ImageColumn;
 use Filament\Tables\Columns\TextColumn;
 use Filament\Tables\Filters\SelectFilter;
 use Filament\Tables\Table;
@@ -26,6 +28,12 @@ class BrandResource extends Resource
                 ->required()
                 ->maxLength(255)
                 ->label('Brand Name'),
+
+            FileUpload::make('image')
+                ->image()
+                ->directory('brands')
+                ->label('Brand Logo')
+                ->helperText('Shown as the brand tile in the mobile catalog. Square images look best; brands without a logo get a lettered tile.'),
         ]);
     }
 
@@ -33,6 +41,10 @@ class BrandResource extends Resource
     {
         return $table
             ->columns([
+                ImageColumn::make('image')
+                    ->label('Logo')
+                    ->circular()
+                    ->disk('public'),
                 TextColumn::make('brand_name')
                     ->label('Brand Name')
                     ->searchable()

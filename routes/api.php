@@ -17,6 +17,7 @@ Route::prefix('auth')->group(function () {
 Route::get('/products',            [ProductController::class, 'index']);
 Route::get('/products/{product}',  [ProductController::class, 'show']);
 Route::get('/brands',              [ProductController::class, 'brands']);
+Route::get('/brands/{brand}/categories', [ProductController::class, 'brandCategories']);
 Route::get('/categories',          [ProductController::class, 'categories']);
 
 // Protected routes

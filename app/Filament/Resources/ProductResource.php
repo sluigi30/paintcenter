@@ -51,13 +51,29 @@ class ProductResource extends Resource
                 ->columnSpanFull()
                 ->label('Description'),
 
-            ColorPicker::make('hex_code')
-                ->label('Paint Color'),
+            TextInput::make('color_code')
+                ->label('Color Code')
+                ->placeholder('e.g. 888')
+                ->maxLength(40)
+                ->helperText('The manufacturer\'s code on the can / shade card.'),
 
-            FileUpload::make('image')
+            TextInput::make('color_name')
+                ->label('Color Name')
+                ->placeholder('e.g. Red')
+                ->maxLength(100),
+
+            ColorPicker::make('hex_code')
+                ->label('Screen Preview Color')
+                ->helperText('Tip: open the brand\'s color chart and use the picker\'s eyedropper to sample the swatch.'),
+
+            FileUpload::make('images')
+                ->label('Product Images')
                 ->image()
+                ->multiple()
+                ->reorderable()
+                ->maxFiles(8)
                 ->directory('products')
-                ->label('Product Image')
+                ->helperText('Up to 8 images. Drag to reorder — the first image is the cover shown in lists and the cart.')
                 ->columnSpanFull(),
 
             // Each size/volume is its own variant with its own price and
@@ -122,6 +138,13 @@ class ProductResource extends Resource
                     ->sortable(),
                 ColorColumn::make('hex_code')
                     ->label('Color'),
+                TextColumn::make('color_code')
+                    ->label('Code')
+                    ->badge()
+                    ->color('gray')
+                    ->placeholder('—')
+                    ->tooltip(fn (Product $record) => $record->color_name)
+                    ->searchable(),
                 // One badge per size, e.g. [1L] [4L] [16L]
                 TextColumn::make('variants.size_volume')
                     ->label('Sizes')

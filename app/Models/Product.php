@@ -19,16 +19,19 @@ class Product extends Model
         'category_id',
         'brand_id',
         'description',
+        'color_code',   // manufacturer color code, e.g. "888"
+        'color_name',   // manufacturer color name, e.g. "Red"
         'hex_code',
-        'image',
+        'images',       // ordered gallery; first entry is the cover
         'is_archived',
     ];
 
     protected $casts = [
         'is_archived' => 'boolean',
+        'images'      => 'array',
     ];
 
-    protected $appends = ['size_volume', 'price', 'stock', 'is_low_stock', 'stock_status'];
+    protected $appends = ['image', 'size_volume', 'price', 'stock', 'is_low_stock', 'stock_status'];
 
     // -------------------------------------------------------
     // Relationships
@@ -62,6 +65,40 @@ class Product extends Model
     public function inventoryLogs()
     {
         return $this->hasMany(InventoryLog::class)->latest();
+    }
+
+    /**
+     * Color codes pasted from manufacturer sites/PDFs often carry Unicode
+     * dashes (‑ – —) that silently break search against an ASCII hyphen.
+     */
+    public static function normalizeColorCode(?string $code): ?string
+    {
+        if ($code === null) {
+            return null;
+        }
+
+        $normalized = trim(str_replace(
+            ["\u{2010}", "\u{2011}", "\u{2012}", "\u{2013}", "\u{2014}", "\u{2015}", "\u{2212}"],
+            '-',
+            $code
+        ));
+
+        return $normalized === '' ? null : $normalized;
+    }
+
+    public function setColorCodeAttribute(?string $value): void
+    {
+        $this->attributes['color_code'] = self::normalizeColorCode($value);
+    }
+
+    // -------------------------------------------------------
+    // Accessors
+    // -------------------------------------------------------
+
+    /** Cover image = first of the gallery; keeps single-image consumers working. */
+    public function getImageAttribute(): ?string
+    {
+        return $this->images[0] ?? null;
     }
 
     // -------------------------------------------------------
