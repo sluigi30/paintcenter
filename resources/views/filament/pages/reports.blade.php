@@ -1,6 +1,30 @@
 <x-filament-panels::page>
 <style>
 /* ════════════════════════════════════════════════════════════
+   THEME TOKENS — light defaults, dark overrides
+   (these custom properties are used throughout this page and
+   were previously undefined, so borders fell back to currentColor)
+════════════════════════════════════════════════════════════ */
+:root{
+    --color-background-secondary:#ffffff;
+    --color-background-tertiary:#f3f4f6;
+    --color-border-secondary:#d1d5db;
+    --color-border-tertiary:#e5e7eb;
+    --color-text-primary:#111827;
+    --color-text-secondary:#374151;
+    --color-text-tertiary:#6b7280;
+}
+html.dark{
+    --color-background-secondary:rgba(255,255,255,.03);
+    --color-background-tertiary:rgba(255,255,255,.06);
+    --color-border-secondary:rgba(255,255,255,.18);
+    --color-border-tertiary:rgba(255,255,255,.12);
+    --color-text-primary:#f4f4f5;
+    --color-text-secondary:#a1a1aa;
+    --color-text-tertiary:#71717a;
+}
+
+/* ════════════════════════════════════════════════════════════
    SCREEN LAYOUT
 ════════════════════════════════════════════════════════════ */
 .rpt-grid-4{display:grid;grid-template-columns:repeat(4,1fr);gap:16px;margin-bottom:20px}
@@ -23,7 +47,7 @@
     box-shadow:0 1px 2px rgba(0,0,0,.04),0 4px 16px -8px rgba(0,0,0,.06)}
 .rpt-filter-head{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:14px;
     padding:16px 20px;border-bottom:1px solid var(--color-border-tertiary)}
-.rpt-filter-eyebrow{font-size:10px;font-weight:800;color:#ea580c;text-transform:uppercase;letter-spacing:.14em;margin:0 0 4px}
+.rpt-filter-eyebrow{font-size:10px;font-weight:800;color:#b91c1c;text-transform:uppercase;letter-spacing:.14em;margin:0 0 4px}
 .rpt-filter-period{font-size:16px;font-weight:700;color:var(--color-text-primary);margin:0;letter-spacing:-.015em;line-height:1.2}
 .rpt-filter-sub{font-size:11.5px;color:var(--color-text-tertiary);margin:3px 0 0}
 .rpt-filter-body{display:flex;flex-wrap:wrap;align-items:stretch;gap:20px;padding:14px 20px 16px}
@@ -33,19 +57,11 @@
     text-transform:uppercase;letter-spacing:.09em;white-space:nowrap;line-height:1}
 .rpt-vsep{width:1px;background:var(--color-border-tertiary);align-self:stretch;flex-shrink:0}
 
-/* segmented preset control */
-.rpt-seg{display:inline-flex;align-items:center;background:var(--color-background-tertiary);
-    border:1px solid var(--color-border-tertiary);border-radius:10px;padding:3px;gap:2px}
-.rpt-seg button{padding:6px 13px;border-radius:8px;font-size:12px;font-weight:600;border:none;
-    background:transparent;color:var(--color-text-secondary);cursor:pointer;transition:all .15s;white-space:nowrap;line-height:1.2}
-.rpt-seg button:hover{color:var(--color-text-primary)}
-.rpt-seg button.active{background:#ea580c;color:#fff;box-shadow:0 1px 3px rgba(234,88,12,.4)}
-
 /* unified date-range field */
 .rpt-range{display:inline-flex;align-items:center;gap:9px;border:1px solid var(--color-border-secondary);
     background:var(--color-background-tertiary);border-radius:10px;padding:6px 12px;
     transition:border-color .15s,box-shadow .15s}
-.rpt-range:focus-within{border-color:#ea580c;box-shadow:0 0 0 3px rgba(234,88,12,.12)}
+.rpt-range:focus-within{border-color:#b91c1c;box-shadow:0 0 0 3px rgba(185,28,28,.12)}
 .rpt-range svg{color:var(--color-text-tertiary);flex-shrink:0}
 .rpt-range input[type=date]{border:none;background:transparent;font-size:12px;font-weight:600;
     color:var(--color-text-primary);outline:none;padding:1px 0;font-family:inherit;cursor:pointer}
@@ -72,10 +88,10 @@ html.dark .rpt-range input[type=date]{color-scheme:dark}
 .rpt-cmp-row .rpt-group-label{color:#3b82f6}
 
 /* export button */
-.rpt-export{display:inline-flex;align-items:center;gap:8px;background:linear-gradient(180deg,#f97316,#ea580c);
+.rpt-export{display:inline-flex;align-items:center;gap:8px;background:linear-gradient(180deg,#dc2626,#b91c1c);
     color:#fff;border:none;border-radius:10px;padding:10px 18px;font-size:12.5px;font-weight:700;
-    cursor:pointer;box-shadow:0 1px 3px rgba(234,88,12,.4);transition:all .15s;white-space:nowrap;line-height:1.2}
-.rpt-export:hover{background:linear-gradient(180deg,#ea580c,#c2410c);box-shadow:0 3px 8px rgba(234,88,12,.45);transform:translateY(-1px)}
+    cursor:pointer;box-shadow:0 1px 3px rgba(185,28,28,.4);transition:all .15s;white-space:nowrap;line-height:1.2}
+.rpt-export:hover{background:linear-gradient(180deg,#b91c1c,#991b1b);box-shadow:0 3px 8px rgba(185,28,28,.45);transform:translateY(-1px)}
 .rpt-export:active{transform:translateY(0)}
 
 .rpt-cmp-table{width:100%;border-collapse:collapse;font-size:13px}
@@ -110,7 +126,6 @@ html.dark .rpt-range input[type=date]{color-scheme:dark}
     .rpt-grid-4{grid-template-columns:1fr 1fr}.rpt-grid-3,.rpt-grid-2{grid-template-columns:1fr}
     .rpt-vsep{display:none}
     .rpt-filter-body{flex-direction:column;align-items:stretch;gap:14px}
-    .rpt-seg{flex-wrap:wrap}
 }
 @media(max-width:500px){.rpt-grid-4{grid-template-columns:1fr}}
 
@@ -176,16 +191,16 @@ html.dark .rpt-range input[type=date]{color-scheme:dark}
     .prt-sec {
         display: flex; align-items: center; gap: 10pt;
         margin: 16pt 0 8pt; padding: 5pt 10pt;
-        border-left: 3pt solid #ea580c; background: #fff7ed;
+        border-left: 3pt solid #b91c1c; background: #fef2f2;
         page-break-inside: avoid;
     }
-    .prt-sec-num  { font-size: 7pt; font-weight: 800; color: #ea580c; letter-spacing: .12em; white-space: nowrap; }
+    .prt-sec-num  { font-size: 7pt; font-weight: 800; color: #b91c1c; letter-spacing: .12em; white-space: nowrap; }
     .prt-sec-title{ font-size: 11pt; font-weight: 700; color: #1f2937; margin: 0; }
 
     /* ── KPI GRID ───────────────────────────────────────── */
     .prt-kpi-grid { display: grid; grid-template-columns: repeat(4,1fr); gap: 8pt; margin-bottom: 10pt; }
     .prt-kpi-box  {
-        border: 1px solid #e5e7eb; border-top: 3pt solid #ea580c;
+        border: 1px solid #e5e7eb; border-top: 3pt solid #b91c1c;
         border-radius: 5pt; padding: 9pt 10pt; background: white;
         page-break-inside: avoid;
     }
@@ -205,7 +220,7 @@ html.dark .rpt-range input[type=date]{color-scheme:dark}
     .prt-tbl th.c, .prt-tbl td.c { text-align: center; }
     .prt-tbl td { padding: 4.5pt 8pt; border-bottom: 1px solid #f0f0f0; color: #1f2937; }
     .prt-tbl tr:nth-child(even) td { background: #f9fafb !important; }
-    .prt-tbl .prt-orange-hd { background: #ea580c !important; }
+    .prt-tbl .prt-red-hd { background: #b91c1c !important; }
     .prt-up { color: #16a34a !important; font-weight: 700; }
     .prt-dn { color: #dc2626 !important; font-weight: 700; }
 
@@ -218,6 +233,17 @@ html.dark .rpt-range input[type=date]{color-scheme:dark}
     .prt-inv-val  { font-size: 16pt; font-weight: 800; margin: 0 0 2pt; }
     .prt-inv-lbl  { font-size: 7pt; color: #6b7280; text-transform: uppercase; letter-spacing: .05em; margin: 0; }
 
+    /* ── SIGNATORIES ────────────────────────────────────── */
+    .prt-sign-wrap { margin-top: 26pt; page-break-inside: avoid; }
+    .prt-sign-heading { font-size: 7pt; font-weight: 800; color: #b91c1c; text-transform: uppercase; letter-spacing: .14em; margin: 0 0 14pt; }
+    .prt-sign-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 22pt; }
+    .prt-sign-box  { text-align: center; }
+    .prt-sign-lbl  { font-size: 7pt; font-weight: 700; color: #6b7280; text-transform: uppercase; letter-spacing: .09em; margin: 0 0 26pt; text-align: left; }
+    .prt-sign-line { border-bottom: 1pt solid #111827; margin: 0 4pt 5pt; }
+    .prt-sign-name { font-size: 9pt; font-weight: 700; color: #111827; text-transform: uppercase; letter-spacing: .04em; margin: 0; }
+    .prt-sign-role { font-size: 7.5pt; color: #6b7280; margin: 1pt 0 0; }
+    .prt-sign-date { font-size: 7pt; color: #9ca3af; margin: 8pt 0 0; }
+
     /* ── PRINT FOOTER ───────────────────────────────────── */
     .prt-footer { margin-top: 18pt; padding-top: 6pt; border-top: 1pt solid #e5e7eb; display: flex; justify-content: space-between; font-size: 7pt; color: #9ca3af; }
 }
@@ -227,10 +253,10 @@ html.dark .rpt-range input[type=date]{color-scheme:dark}
      PRINT-ONLY: LETTERHEAD
 ════════════════════════════════════════════════════════════ --}}
 <div class="print-only" style="display:none;margin-bottom:4pt">
-    <div style="border-bottom:2.5pt solid #ea580c;padding-bottom:10pt;margin-bottom:14pt">
+    <div style="border-bottom:2.5pt solid #b91c1c;padding-bottom:10pt;margin-bottom:14pt">
         <div class="print-flex" style="display:none;justify-content:space-between;align-items:flex-end">
             <div>
-                <p style="font-size:7pt;font-weight:800;color:#ea580c;letter-spacing:.15em;text-transform:uppercase;margin:0 0 4pt">NCM Paint Center</p>
+                <p style="font-size:7pt;font-weight:800;color:#b91c1c;letter-spacing:.15em;text-transform:uppercase;margin:0 0 4pt">NCM Paint Center</p>
                 <h1 style="font-size:22pt;font-weight:800;color:#111827;margin:0 0 5pt;letter-spacing:-.03em;line-height:1">Sales &amp; Operations Report</h1>
                 <p style="font-size:9pt;color:#374151;margin:0">
                     {{ \Carbon\Carbon::parse($dateFrom)->format('F d, Y') }}
@@ -278,18 +304,7 @@ html.dark .rpt-range input[type=date]{color-scheme:dark}
 
     <div class="rpt-filter-body">
         <div class="rpt-group">
-            <span class="rpt-group-label">Quick Range</span>
-            <div class="rpt-seg">
-                @foreach(['7'=>'7D','30'=>'30D','90'=>'90D','mtd'=>'MTD','lm'=>'Last Month','365'=>'YTD'] as $val=>$label)
-                    <button type="button" class="{{ $preset===$val?'active':'' }}" wire:click="applyPreset('{{ $val }}')">{{ $label }}</button>
-                @endforeach
-            </div>
-        </div>
-
-        <div class="rpt-vsep"></div>
-
-        <div class="rpt-group">
-            <span class="rpt-group-label">Custom Range</span>
+            <span class="rpt-group-label">Date Range</span>
             <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
                 <div class="rpt-range">
                     <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -424,7 +439,7 @@ html.dark .rpt-range input[type=date]{color-scheme:dark}
         <thead>
             <tr>
                 <th style="width:30%">Metric</th>
-                <th><span class="rpt-cmp-period-a" style="color:#ea580c">●</span> {{ \Carbon\Carbon::parse($dateFrom)->format('M d') }} – {{ \Carbon\Carbon::parse($dateTo)->format('M d, Y') }}</th>
+                <th><span class="rpt-cmp-period-a" style="color:#b91c1c">●</span> {{ \Carbon\Carbon::parse($dateFrom)->format('M d') }} – {{ \Carbon\Carbon::parse($dateTo)->format('M d, Y') }}</th>
                 <th><span style="color:#60a5fa">●</span> {{ \Carbon\Carbon::parse($compareFrom)->format('M d') }} – {{ \Carbon\Carbon::parse($compareTo)->format('M d, Y') }}</th>
                 <th>Change</th>
             </tr>
@@ -448,16 +463,16 @@ html.dark .rpt-range input[type=date]{color-scheme:dark}
         <thead>
             <tr>
                 <th style="width:28%">Metric</th>
-                <th class="prt-orange-hd">{{ \Carbon\Carbon::parse($dateFrom)->format('M d') }} – {{ \Carbon\Carbon::parse($dateTo)->format('M d, Y') }}</th>
+                <th class="prt-red-hd">{{ \Carbon\Carbon::parse($dateFrom)->format('M d') }} – {{ \Carbon\Carbon::parse($dateTo)->format('M d, Y') }}</th>
                 <th>{{ \Carbon\Carbon::parse($compareFrom)->format('M d') }} – {{ \Carbon\Carbon::parse($compareTo)->format('M d, Y') }}</th>
                 <th class="r">Change</th>
             </tr>
         </thead>
         <tbody>
-            <tr><td>Total Revenue</td><td style="font-weight:700;color:#ea580c">₱{{ number_format($totalRevenue,2) }}</td><td>₱{{ number_format($compareRevenue,2) }}</td><td class="r {{ $rc>0?'prt-up':($rc<0?'prt-dn':'') }}">{!! $chgHtml($rc) !!}</td></tr>
-            <tr><td>Total Orders</td><td style="font-weight:700;color:#ea580c">{{ number_format($totalOrders) }}</td><td>{{ number_format($compareOrders) }}</td><td class="r {{ $oc>0?'prt-up':($oc<0?'prt-dn':'') }}">{!! $chgHtml($oc) !!}</td></tr>
-            <tr><td>Avg Order Value</td><td style="font-weight:700;color:#ea580c">₱{{ number_format($avgOrderValue,2) }}</td><td>₱{{ number_format($compareAvgOrder,2) }}</td><td class="r {{ $ac>0?'prt-up':($ac<0?'prt-dn':'') }}">{!! $chgHtml($ac) !!}</td></tr>
-            <tr><td>New Customers</td><td style="font-weight:700;color:#ea580c">{{ number_format($newCustomers) }}</td><td>{{ number_format($compareNewCustomers) }}</td><td class="r {{ $nc>0?'prt-up':($nc<0?'prt-dn':'') }}">{!! $chgHtml($nc) !!}</td></tr>
+            <tr><td>Total Revenue</td><td style="font-weight:700;color:#b91c1c">₱{{ number_format($totalRevenue,2) }}</td><td>₱{{ number_format($compareRevenue,2) }}</td><td class="r {{ $rc>0?'prt-up':($rc<0?'prt-dn':'') }}">{!! $chgHtml($rc) !!}</td></tr>
+            <tr><td>Total Orders</td><td style="font-weight:700;color:#b91c1c">{{ number_format($totalOrders) }}</td><td>{{ number_format($compareOrders) }}</td><td class="r {{ $oc>0?'prt-up':($oc<0?'prt-dn':'') }}">{!! $chgHtml($oc) !!}</td></tr>
+            <tr><td>Avg Order Value</td><td style="font-weight:700;color:#b91c1c">₱{{ number_format($avgOrderValue,2) }}</td><td>₱{{ number_format($compareAvgOrder,2) }}</td><td class="r {{ $ac>0?'prt-up':($ac<0?'prt-dn':'') }}">{!! $chgHtml($ac) !!}</td></tr>
+            <tr><td>New Customers</td><td style="font-weight:700;color:#b91c1c">{{ number_format($newCustomers) }}</td><td>{{ number_format($compareNewCustomers) }}</td><td class="r {{ $nc>0?'prt-up':($nc<0?'prt-dn':'') }}">{!! $chgHtml($nc) !!}</td></tr>
         </tbody>
     </table>
 </div>
@@ -475,19 +490,22 @@ html.dark .rpt-range input[type=date]{color-scheme:dark}
             </div>
         </div>
         <div class="rpt-legend">
-            <div class="rpt-legend-item"><div class="rpt-legend-dot" style="background:#ea580c"></div> Revenue</div>
+            <div class="rpt-legend-item"><div class="rpt-legend-dot" style="background:#b91c1c"></div> Revenue</div>
             <div class="rpt-legend-item"><div style="width:16px;height:2px;background:#60a5fa;flex-shrink:0"></div> Orders</div>
             @if($compareEnabled)
             <div class="rpt-legend-item"><div class="rpt-legend-dot" style="background:#a78bfa"></div> Revenue (compare)</div>
             @endif
         </div>
-        <canvas id="rptSalesChart" style="max-height:230px"></canvas>
+        {{-- wire:ignore keeps Livewire morphs from touching the canvas Chart.js owns --}}
+        <div wire:ignore style="position:relative;height:230px">
+            <canvas id="rptSalesChart"></canvas>
+        </div>
     </div>
 
     <div class="rpt-card">
         <h3>Orders by Status</h3>
-        <div style="display:flex;justify-content:center;margin-bottom:16px">
-            <canvas id="rptStatusChart" style="max-width:180px;max-height:180px"></canvas>
+        <div wire:ignore style="position:relative;height:180px;width:180px;margin:0 auto 16px">
+            <canvas id="rptStatusChart"></canvas>
         </div>
         @foreach($ordersByStatus as $row)
         @php
@@ -571,7 +589,7 @@ html.dark .rpt-range input[type=date]{color-scheme:dark}
             <div style="flex:1;min-width:0">
                 <p class="rpt-product-name">{{ $product['name'] }}</p>
                 <p class="rpt-product-meta">{{ $product['brand'] }} · {{ $product['total_qty'] }} units</p>
-                <div class="rpt-bar-wrap"><div class="rpt-bar-fill" style="width:{{ min(100,($product['total_revenue']/$maxRev)*100) }}%;background:#ea580c"></div></div>
+                <div class="rpt-bar-wrap"><div class="rpt-bar-fill" style="width:{{ min(100,($product['total_revenue']/$maxRev)*100) }}%;background:#b91c1c"></div></div>
             </div>
             <span style="font-size:13px;font-weight:700;color:var(--color-text-primary);white-space:nowrap">₱{{ number_format($product['total_revenue'],0) }}</span>
         </div>
@@ -805,7 +823,7 @@ html.dark .rpt-range input[type=date]{color-scheme:dark}
     </div>
     <div class="print-flex" style="display:none;justify-content:flex-end;margin-bottom:8pt">
         <p style="font-size:8.5pt;color:#374151;margin:0">
-            Estimated Stock Value: <strong style="font-size:11pt;color:#ea580c">₱{{ number_format($inventoryStats['stock_value'],2) }}</strong>
+            Estimated Stock Value: <strong style="font-size:11pt;color:#b91c1c">₱{{ number_format($inventoryStats['stock_value'],2) }}</strong>
         </p>
     </div>
 
@@ -858,6 +876,39 @@ html.dark .rpt-range input[type=date]{color-scheme:dark}
         </tbody>
     </table>
 
+    {{-- Signatories --}}
+    @php
+        $preparer     = auth()->user();
+        $preparerName = trim(($preparer->first_name ?? '') . ' ' . ($preparer->last_name ?? '')) ?: ($preparer->email ?? 'Administrator');
+        $preparerRole = ($preparer->role ?? null) === 'super_admin' ? 'Super Administrator' : 'Store Administrator';
+    @endphp
+    <div class="prt-sign-wrap">
+        <p class="prt-sign-heading">Certification &amp; Approval</p>
+        <div class="prt-sign-grid">
+            <div class="prt-sign-box">
+                <p class="prt-sign-lbl">Prepared by</p>
+                <div class="prt-sign-line"></div>
+                <p class="prt-sign-name">{{ $preparerName }}</p>
+                <p class="prt-sign-role">{{ $preparerRole }}</p>
+                <p class="prt-sign-date">Date: {{ now()->format('F d, Y') }}</p>
+            </div>
+            <div class="prt-sign-box">
+                <p class="prt-sign-lbl">Reviewed by</p>
+                <div class="prt-sign-line"></div>
+                <p class="prt-sign-name">&nbsp;</p>
+                <p class="prt-sign-role">Operations Manager</p>
+                <p class="prt-sign-date">Date: ______________________</p>
+            </div>
+            <div class="prt-sign-box">
+                <p class="prt-sign-lbl">Approved by</p>
+                <div class="prt-sign-line"></div>
+                <p class="prt-sign-name">&nbsp;</p>
+                <p class="prt-sign-role">General Manager / Proprietor</p>
+                <p class="prt-sign-date">Date: ______________________</p>
+            </div>
+        </div>
+    </div>
+
     {{-- Footer --}}
     <div class="prt-footer">
         <span>NCM Paint Center &mdash; Confidential. For internal use only.</span>
@@ -871,87 +922,104 @@ html.dark .rpt-range input[type=date]{color-scheme:dark}
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
 <script>
 (function () {
-    const isDark = () => document.documentElement.classList.contains('dark');
-    function gridColor()  { return isDark() ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)'; }
-    function labelColor() { return isDark() ? '#9ca3af' : '#6b7280'; }
-    const destroyChart = id => { const c = Chart.getChart(id); if (c) c.destroy(); };
+    // The renderer is defined ONCE on window (this script re-runs on every
+    // SPA visit to the page) and every render waits for Chart.js + the
+    // canvases, so redraws survive Livewire morphs, slow CDN loads, and
+    // rapid filter changes.
+    if (!window.__rptCharts) {
+        window.__rptCharts = { sales: null, status: null };
 
-    function buildSalesChart(salesData, compareData, hasCompare) {
-        destroyChart('rptSalesChart');
-        const ctx = document.getElementById('rptSalesChart');
-        if (!ctx || !salesData.length) return;
-        const datasets = [
-            { label: 'Revenue (₱)', yAxisID: 'y', data: salesData.map(r => r.revenue),
-              borderColor: '#ea580c', backgroundColor: 'rgba(234,88,12,0.08)',
-              borderWidth: 2, fill: true, tension: 0.4,
-              pointRadius: salesData.length > 20 ? 0 : 3, pointBackgroundColor: '#ea580c' },
-            { label: 'Orders', yAxisID: 'y1', data: salesData.map(r => r.orders),
-              borderColor: '#60a5fa', backgroundColor: 'transparent',
-              borderWidth: 1.5, borderDash: [4,4], fill: false, tension: 0.4, pointRadius: 0 },
-        ];
-        if (hasCompare && compareData.length) {
-            datasets.push({
-                label: 'Revenue – Compare (₱)', yAxisID: 'y',
-                data: Array.from({ length: salesData.length }, (_, i) => compareData[i]?.revenue ?? null),
-                borderColor: '#a78bfa', backgroundColor: 'rgba(167,139,250,0.05)',
-                borderWidth: 2, borderDash: [6,3], fill: true, tension: 0.4, pointRadius: 0,
+        const isDark     = () => document.documentElement.classList.contains('dark');
+        const gridColor  = () => isDark() ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)';
+        const labelColor = () => isDark() ? '#9ca3af' : '#6b7280';
+
+        function buildSalesChart(salesData, compareData, hasCompare) {
+            window.__rptCharts.sales?.destroy();
+            window.__rptCharts.sales = null;
+            const ctx = document.getElementById('rptSalesChart');
+            if (!ctx || !salesData.length) return;
+            const datasets = [
+                { label: 'Revenue (₱)', yAxisID: 'y', data: salesData.map(r => r.revenue),
+                  borderColor: '#b91c1c', backgroundColor: 'rgba(185,28,28,0.08)',
+                  borderWidth: 2, fill: true, tension: 0.4,
+                  pointRadius: salesData.length > 20 ? 0 : 3, pointBackgroundColor: '#b91c1c' },
+                { label: 'Orders', yAxisID: 'y1', data: salesData.map(r => r.orders),
+                  borderColor: '#60a5fa', backgroundColor: 'transparent',
+                  borderWidth: 1.5, borderDash: [4,4], fill: false, tension: 0.4, pointRadius: 0 },
+            ];
+            if (hasCompare && compareData.length) {
+                datasets.push({
+                    label: 'Revenue – Compare (₱)', yAxisID: 'y',
+                    data: Array.from({ length: salesData.length }, (_, i) => compareData[i]?.revenue ?? null),
+                    borderColor: '#a78bfa', backgroundColor: 'rgba(167,139,250,0.05)',
+                    borderWidth: 2, borderDash: [6,3], fill: true, tension: 0.4, pointRadius: 0,
+                });
+            }
+            window.__rptCharts.sales = new Chart(ctx, {
+                type: 'line', data: { labels: salesData.map(r => r.label), datasets },
+                options: {
+                    responsive: true, maintainAspectRatio: false,
+                    interaction: { mode: 'index', intersect: false },
+                    plugins: {
+                        legend: { display: false },
+                        tooltip: { callbacks: { label: c => c.datasetIndex === 1
+                            ? ` ${c.raw} orders`
+                            : ` ₱${Number(c.raw).toLocaleString('en-PH',{minimumFractionDigits:2})}` } },
+                    },
+                    scales: {
+                        x:  { ticks: { color: labelColor(), font: { size: 10 }, maxTicksLimit: 12, maxRotation: 0 }, grid: { color: gridColor() } },
+                        y:  { position: 'left', beginAtZero: true, ticks: { color: labelColor(), font: { size: 10 }, callback: v => '₱'+Number(v).toLocaleString() }, grid: { color: gridColor() } },
+                        y1: { position: 'right', beginAtZero: true, ticks: { color: '#60a5fa', font: { size: 10 }, precision: 0 }, grid: { drawOnChartArea: false } },
+                    },
+                },
             });
         }
-        new Chart(ctx, {
-            type: 'line', data: { labels: salesData.map(r => r.label), datasets },
-            options: {
-                responsive: true, interaction: { mode: 'index', intersect: false },
-                plugins: {
-                    legend: { display: false },
-                    tooltip: { callbacks: { label: c => c.datasetIndex === 1
-                        ? ` ${c.raw} orders`
-                        : ` ₱${Number(c.raw).toLocaleString('en-PH',{minimumFractionDigits:2})}` } },
-                },
-                scales: {
-                    x:  { ticks: { color: labelColor(), font: { size: 10 } }, grid: { color: gridColor() } },
-                    y:  { position: 'left',  ticks: { color: labelColor(), font: { size: 10 }, callback: v => '₱'+Number(v).toLocaleString() }, grid: { color: gridColor() } },
-                    y1: { position: 'right', ticks: { color: '#60a5fa', font: { size: 10 } }, grid: { drawOnChartArea: false } },
-                },
-            },
-        });
+
+        function buildStatusChart(statusData) {
+            window.__rptCharts.status?.destroy();
+            window.__rptCharts.status = null;
+            const ctx = document.getElementById('rptStatusChart');
+            if (!ctx || !statusData.length) return;
+            const colors = { pending:'#fbbf24', processing:'#60a5fa', shipped:'#a78bfa',
+                ready_for_pickup:'#34d399', completed:'#4ade80', cancelled:'#f87171' };
+            window.__rptCharts.status = new Chart(ctx, {
+                type: 'doughnut',
+                data: { labels: statusData.map(r => r.status.replace(/_/g,' ')),
+                    datasets: [{ data: statusData.map(r => r.count),
+                        backgroundColor: statusData.map(r => colors[r.status] ?? '#d1d5db'),
+                        borderWidth: 0, hoverOffset: 4 }] },
+                options: { responsive: true, maintainAspectRatio: false, cutout: '72%',
+                    plugins: { legend: { display: false },
+                        tooltip: { callbacks: { label: c => ` ${c.label}: ${c.raw} orders` } } } },
+            });
+        }
+
+        window.__rptRenderCharts = function (d) {
+            let tries = 0;
+            (function attempt() {
+                const ready = window.Chart
+                    && document.getElementById('rptSalesChart')
+                    && document.getElementById('rptStatusChart');
+                if (!ready) {
+                    if (++tries < 80) setTimeout(attempt, 50); // wait up to ~4s for CDN / DOM
+                    return;
+                }
+                // let Livewire finish morphing the DOM before drawing
+                requestAnimationFrame(() => {
+                    buildSalesChart(d.sales ?? [], d.compare ?? [], !!d.compareEnabled);
+                    buildStatusChart(d.status ?? []);
+                });
+            })();
+        };
+
+        window.addEventListener('rpt:data', e => window.__rptRenderCharts(e.detail ?? {}));
     }
 
-    function buildStatusChart(statusData) {
-        destroyChart('rptStatusChart');
-        const ctx = document.getElementById('rptStatusChart');
-        if (!ctx || !statusData.length) return;
-        const colors = { pending:'#fbbf24', processing:'#60a5fa', shipped:'#a78bfa',
-            ready_for_pickup:'#34d399', completed:'#4ade80', cancelled:'#f87171' };
-        new Chart(ctx, {
-            type: 'doughnut',
-            data: { labels: statusData.map(r => r.status.replace(/_/g,' ')),
-                datasets: [{ data: statusData.map(r => r.count),
-                    backgroundColor: statusData.map(r => colors[r.status] ?? '#d1d5db'),
-                    borderWidth: 0, hoverOffset: 4 }] },
-            options: { responsive: true, cutout: '72%',
-                plugins: { legend: { display: false },
-                    tooltip: { callbacks: { label: c => ` ${c.label}: ${c.raw} orders` } } } },
-        });
-    }
-
-    function initCharts(sales, compare, status, hasCompare) {
-        buildSalesChart(sales, compare, hasCompare);
-        buildStatusChart(status);
-    }
-
-    const run = () => initCharts(
-        @json($salesChart), @json($compareChart), @json($ordersByStatus), @json($compareEnabled)
-    );
-
-    if (document.readyState === 'loading') {
-        document.addEventListener('DOMContentLoaded', run);
-    } else {
-        run();
-    }
-
-    window.addEventListener('rpt:data', e => {
-        const d = e.detail ?? {};
-        initCharts(d.sales ?? [], d.compare ?? [], d.status ?? [], d.compareEnabled ?? false);
+    window.__rptRenderCharts({
+        sales:          @json($salesChart),
+        compare:        @json($compareChart),
+        status:         @json($ordersByStatus),
+        compareEnabled: @json($compareEnabled),
     });
 })();
 </script>

@@ -12,6 +12,8 @@ class OrderItem extends Model
     protected $fillable = [
         'order_id',
         'product_id',
+        'product_variant_id',
+        'size_volume',   // snapshot of the ordered size, like unit_price
         'quantity',
         'unit_price',
         'subtotal',
@@ -25,5 +27,10 @@ class OrderItem extends Model
     public function product()
     {
         return $this->belongsTo(Product::class);
+    }
+
+    public function variant()
+    {
+        return $this->belongsTo(ProductVariant::class, 'product_variant_id');
     }
 }

@@ -11,6 +11,7 @@ class InventoryLog extends Model
 
     protected $fillable = [
         'product_id',
+        'product_variant_id',
         'admin_id',
         'action_name',
         'quantity_changed',
@@ -28,6 +29,11 @@ class InventoryLog extends Model
     public function product()
     {
         return $this->belongsTo(Product::class);
+    }
+
+    public function variant()
+    {
+        return $this->belongsTo(ProductVariant::class, 'product_variant_id');
     }
 
     public function admin()
@@ -84,28 +90,30 @@ class InventoryLog extends Model
     // -------------------------------------------------------
 
     /**
-     * Creates a log entry and updates the product stock in one call.
+     * Creates a log entry and updates the VARIANT stock in one call.
+     * Stock lives per size — every adjustment names the exact variant.
      *
      * Usage:
-     *   InventoryLog::record($product, 'restock', 50, 'Supplier delivery');
-     *   InventoryLog::record($product, 'deduct', -5, 'Damaged items');
+     *   InventoryLog::record($variant, 'restock', 50, 'Supplier delivery');
+     *   InventoryLog::record($variant, 'deduct', -5, 'Damaged items');
      */
     public static function record(
-        Product $product,
+        ProductVariant $variant,
         string $action,
         int $quantity,
         string $notes = ''
     ): self {
-        // Update the product stock
-        $product->increment('stock', $quantity);
+        // Update the variant stock
+        $variant->increment('stock', $quantity);
 
         // Write the log entry
         return self::create([
-            'product_id'       => $product->id,
-            'admin_id'         => auth()->id(),
-            'action_name'      => $action,
-            'quantity_changed' => $quantity,
-            'notes'            => $notes,
+            'product_id'         => $variant->product_id,
+            'product_variant_id' => $variant->id,
+            'admin_id'           => auth()->id(),
+            'action_name'        => $action,
+            'quantity_changed'   => $quantity,
+            'notes'              => $notes,
         ]);
     }
 }

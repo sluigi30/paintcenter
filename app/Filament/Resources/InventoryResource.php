@@ -3,8 +3,10 @@
 namespace App\Filament\Resources;
 
 use App\Filament\Resources\InventoryResource\Pages;
+use App\Models\Brand;
+use App\Models\Category;
 use App\Models\InventoryLog;
-use App\Models\Product;
+use App\Models\ProductVariant;
 use Filament\Forms\Components\Select;
 use Filament\Forms\Components\Textarea;
 use Filament\Forms\Components\TextInput;
@@ -18,16 +20,21 @@ use Filament\Tables\Filters\SelectFilter;
 use Filament\Tables\Table;
 use Illuminate\Database\Eloquent\Builder;
 
-
+/**
+ * Inventory is managed per VARIANT — one row per size of each product,
+ * each with its own stock and alert threshold. Every stock change goes
+ * through InventoryLog::record() for the audit trail.
+ */
 class InventoryResource extends Resource
 {
-    protected static ?string $model = Product::class;
+    protected static ?string $model = ProductVariant::class;
     protected static ?string $navigationLabel = 'Inventory';
     protected static ?string $modelLabel = 'Inventory Item';
     protected static ?string $pluralModelLabel = 'Inventory';
     protected static ?int $navigationSort = 2;
     protected static \UnitEnum|string|null $navigationGroup = 'Operations';
     protected static \BackedEnum|string|null $navigationIcon = 'heroicon-o-inbox-stack';
+
     // -------------------------------------------------------
     // Form — used when editing the low_stock_threshold
     // -------------------------------------------------------
@@ -45,48 +52,57 @@ class InventoryResource extends Resource
     }
 
     // -------------------------------------------------------
-    // Table — main inventory list
+    // Table — main inventory list (one row per size)
     // -------------------------------------------------------
 
     public static function table(Table $table): Table
     {
         return $table
             ->query(
-                // Always show out-of-stock and low-stock products first
-                Product::query()->orderByRaw("
-                    CASE
-                        WHEN stock = 0 THEN 0
-                        WHEN stock <= low_stock_threshold THEN 1
-                        ELSE 2
-                    END ASC
-                ")->orderBy('stock', 'asc')
+                // Always show out-of-stock and low-stock variants first
+                ProductVariant::query()
+                    ->with(['product.brand', 'product.category'])
+                    ->orderByRaw("
+                        CASE
+                            WHEN stock = 0 THEN 0
+                            WHEN stock <= low_stock_threshold THEN 1
+                            ELSE 2
+                        END ASC
+                    ")->orderBy('stock', 'asc')
             )
             ->columns([
-            \Filament\Tables\Columns\ImageColumn::make('image')
-                ->label('')
-                ->circular()
-                ->disk('public')
-                ->defaultImageUrl(fn ($record) => 
-                    'https://placehold.co/40x40/' . 
-                    ltrim($record->hex_code ?? 'cccccc', '#') . 
-                    '/' . 
-                    ltrim($record->hex_code ?? 'cccccc', '#') . 
-                    '?text=+'
-                ),
+                \Filament\Tables\Columns\ImageColumn::make('product.image')
+                    ->label('')
+                    ->circular()
+                    ->disk('public')
+                    ->defaultImageUrl(fn ($record) =>
+                        'https://placehold.co/40x40/' .
+                        ltrim($record->product?->hex_code ?? 'cccccc', '#') .
+                        '/' .
+                        ltrim($record->product?->hex_code ?? 'cccccc', '#') .
+                        '?text=+'
+                    ),
 
-                TextColumn::make('brand.brand_name')
+                TextColumn::make('product.brand.brand_name')
                     ->label('Brand')
                     ->sortable()
                     ->searchable(),
 
-                TextColumn::make('description')
+                TextColumn::make('product.description')
                     ->label('Product')
                     ->limit(40)
                     ->searchable()
-                    ->tooltip(fn ($record) => $record->description),
+                    ->tooltip(fn ($record) => $record->product?->description),
 
                 TextColumn::make('size_volume')
                     ->label('Size')
+                    ->badge()
+                    ->color('gray')
+                    ->sortable(),
+
+                TextColumn::make('price')
+                    ->label('Price')
+                    ->money('PHP')
                     ->sortable(),
 
                 TextColumn::make('stock')
@@ -149,11 +165,17 @@ class InventoryResource extends Resource
 
                 SelectFilter::make('brand_id')
                     ->label('Brand')
-                    ->relationship('brand', 'brand_name'),
+                    ->options(fn () => Brand::where('is_archived', false)->pluck('brand_name', 'id'))
+                    ->query(fn (Builder $query, array $data) => filled($data['value'] ?? null)
+                        ? $query->whereHas('product', fn ($q) => $q->where('brand_id', $data['value']))
+                        : $query),
 
                 SelectFilter::make('category_id')
                     ->label('Category')
-                    ->relationship('category', 'category_name'),
+                    ->options(fn () => Category::where('is_archived', false)->pluck('category_name', 'id'))
+                    ->query(fn (Builder $query, array $data) => filled($data['value'] ?? null)
+                        ? $query->whereHas('product', fn ($q) => $q->where('category_id', $data['value']))
+                        : $query),
             ])
 
             // -------------------------------------------------------
@@ -166,7 +188,7 @@ class InventoryResource extends Resource
                     ->label('Adjust Stock')
                     ->icon('heroicon-o-arrows-up-down')
                     ->color('primary')
-                    ->modalHeading(fn ($record) => 'Adjust Stock — ' . $record->description)
+                    ->modalHeading(fn ($record) => 'Adjust Stock — ' . $record->display_name)
                     ->modalDescription(fn ($record) => 'Current stock: ' . $record->stock . ' units')
                     ->modalWidth('md')
                     ->form([
@@ -197,7 +219,7 @@ class InventoryResource extends Resource
                             ->rows(2)
                             ->maxLength(255),
                     ])
-                    ->action(function (Product $record, array $data) {
+                    ->action(function (ProductVariant $record, array $data) {
                         $quantity = (int) $data['quantity'];
                         $action   = $data['action_type'];
                         $notes    = $data['notes'] ?? '';
@@ -216,7 +238,6 @@ class InventoryResource extends Resource
                             $quantity = -$quantity;
                         }
 
-                        // Use the helper from InventoryLog (File 3)
                         InventoryLog::record($record, $action, $quantity, $notes);
 
                         // Show success notification
@@ -233,8 +254,8 @@ class InventoryResource extends Resource
                     ->label('View Logs')
                     ->icon('heroicon-o-clock')
                     ->color('gray')
-                    ->modalHeading(fn ($record) => 'Inventory History — ' . $record->description)
-                    ->modalContent(function (Product $record) {
+                    ->modalHeading(fn ($record) => 'Inventory History — ' . $record->display_name)
+                    ->modalContent(function (ProductVariant $record) {
                         $logs = $record->inventoryLogs()
                             ->with('admin')
                             ->latest()
@@ -251,7 +272,7 @@ class InventoryResource extends Resource
                     ->label('Set Alert')
                     ->icon('heroicon-o-bell-alert')
                     ->color('warning')
-                    ->modalHeading(fn ($record) => 'Set Low Stock Alert — ' . $record->description)
+                    ->modalHeading(fn ($record) => 'Set Low Stock Alert — ' . $record->display_name)
                     ->modalWidth('sm')
                     ->form([
                         TextInput::make('low_stock_threshold')
@@ -259,10 +280,10 @@ class InventoryResource extends Resource
                             ->numeric()
                             ->minValue(1)
                             ->required()
-                            ->default(fn (Product $record) => $record->low_stock_threshold)
+                            ->default(fn (ProductVariant $record) => $record->low_stock_threshold)
                             ->suffix('units'),
                     ])
-                    ->action(function (Product $record, array $data) {
+                    ->action(function (ProductVariant $record, array $data) {
                         $record->update([
                             'low_stock_threshold' => $data['low_stock_threshold'],
                         ]);
@@ -279,8 +300,8 @@ class InventoryResource extends Resource
                 BulkActionGroup::make([]),
             ])
 
-            ->emptyStateHeading('No products found')
-            ->emptyStateDescription('Add products first from the Products section.')
+            ->emptyStateHeading('No inventory items found')
+            ->emptyStateDescription('Add products with sizes first from the Products section.')
             ->emptyStateIcon('heroicon-o-archive-box');
     }
 

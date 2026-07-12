@@ -28,7 +28,8 @@ class AdminPanelProvider extends PanelProvider
             ->homeUrl('/admin')
             ->brandName('NCM Paint Center')
             ->colors([
-                'primary' => Color::hex('#ea580c'), // warm orange-600
+                'primary' => Color::hex('#b91c1c'), // NCM brand red
+                'danger' => Color::Rose, // keep destructive actions distinguishable from the red primary
             ])
             ->font('Inter')
             ->login()

@@ -3,7 +3,7 @@
 namespace App\Listeners;
 
 use App\Filament\Resources\InventoryResource;
-use App\Models\Product;
+use App\Models\ProductVariant;
 use App\Models\User;
 use Filament\Actions\Action;
 use Filament\Notifications\Notification;
@@ -49,9 +49,10 @@ class SendStockAlertsOnLogin
             ->whereIn('data->title', self::BRIEFING_TITLES)
             ->delete();
 
-        $active = Product::where('is_archived', false);
+        // Stock lives per variant (size) — brief on sizes, not products
+        $active = ProductVariant::active();
 
-        $outOfStock = (clone $active)->outOfStock()->with('brand')->get();
+        $outOfStock = (clone $active)->outOfStock()->with('product.brand')->get();
         $lowStock   = (clone $active)->lowStock()->where('stock', '>', 0)->count();
 
         if ($outOfStock->isEmpty() && $lowStock === 0) {
@@ -118,16 +119,16 @@ class SendStockAlertsOnLogin
 
         $summary = match (true) {
             $out > 0 && $lowStock > 0 =>
-                "<strong>{$out}</strong> " . Str::plural('product', $out) . ' ' . ($out === 1 ? 'has' : 'have') . ' sold out ' .
+                "<strong>{$out}</strong> " . Str::plural('item', $out) . ' ' . ($out === 1 ? 'has' : 'have') . ' sold out ' .
                 "and <strong>{$lowStock}</strong> more " . ($lowStock === 1 ? 'has' : 'have') . ' fallen below ' .
                 ($lowStock === 1 ? 'its' : 'their') . ' reorder point.',
 
             $out > 0 =>
-                "<strong>{$out}</strong> " . Str::plural('product', $out) . ' ' . ($out === 1 ? 'has' : 'have') . ' sold out ' .
+                "<strong>{$out}</strong> " . Str::plural('item', $out) . ' ' . ($out === 1 ? 'has' : 'have') . ' sold out ' .
                 'and ' . ($out === 1 ? 'is' : 'are') . ' unavailable to customers until restocked.',
 
             default =>
-                "<strong>{$lowStock}</strong> " . Str::plural('product', $lowStock) . ' ' . ($lowStock === 1 ? 'has' : 'have') .
+                "<strong>{$lowStock}</strong> " . Str::plural('item', $lowStock) . ' ' . ($lowStock === 1 ? 'has' : 'have') .
                 ' fallen below ' . ($lowStock === 1 ? 'its' : 'their') . ' reorder point and may sell out soon.',
         };
 
@@ -137,11 +138,7 @@ class SendStockAlertsOnLogin
         // specifics beat a generic count.
         if ($out > 0 && $out <= 3) {
             $names = $outOfStock
-                ->map(fn (Product $product) => trim(
-                    ($product->brand?->brand_name ? "{$product->brand->brand_name} — " : '') .
-                    $product->description .
-                    ($product->size_volume ? " ({$product->size_volume})" : '')
-                ))
+                ->map(fn (ProductVariant $variant) => $variant->display_name)
                 ->implode('; ');
 
             $briefing .= "<br><br><strong>Sold out:</strong> {$names}.";

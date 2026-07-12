@@ -2,12 +2,15 @@
 
 namespace App\Models;
 
-use App\Observers\ProductObserver;
-use Illuminate\Database\Eloquent\Attributes\ObservedBy;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 
-#[ObservedBy(ProductObserver::class)]
+/**
+ * Product identity (name, brand, category, color, image).
+ * Purchasable sizes live in ProductVariant — price, stock, and
+ * thresholds are per variant. The stock/price/size_volume attributes
+ * on this model are computed aggregates kept for API convenience.
+ */
 class Product extends Model
 {
     use HasFactory;
@@ -16,16 +19,16 @@ class Product extends Model
         'category_id',
         'brand_id',
         'description',
-        'size_volume',
         'hex_code',
-        'price',
-        'stock',
-        'low_stock_threshold',
         'image',
         'is_archived',
     ];
 
-    protected $appends = ['is_low_stock', 'stock_status'];
+    protected $casts = [
+        'is_archived' => 'boolean',
+    ];
+
+    protected $appends = ['size_volume', 'price', 'stock', 'is_low_stock', 'stock_status'];
 
     // -------------------------------------------------------
     // Relationships
@@ -41,6 +44,16 @@ class Product extends Model
         return $this->belongsTo(Brand::class);
     }
 
+    public function variants()
+    {
+        return $this->hasMany(ProductVariant::class);
+    }
+
+    public function activeVariants()
+    {
+        return $this->hasMany(ProductVariant::class)->where('is_archived', false);
+    }
+
     public function orderItems()
     {
         return $this->hasMany(OrderItem::class);
@@ -52,52 +65,80 @@ class Product extends Model
     }
 
     // -------------------------------------------------------
-    // Accessors (computed properties)
+    // Aggregate accessors (computed from variants)
     // -------------------------------------------------------
 
-    /**
-     * Returns true if stock is at or below the threshold.
-     */
-    public function getIsLowStockAttribute(): bool
+    /** Comma list of active sizes, e.g. "1L, 4L, 16L". */
+    public function getSizeVolumeAttribute(): string
     {
-        return $this->stock <= $this->low_stock_threshold;
+        return $this->availableVariants()->pluck('size_volume')->implode(', ');
     }
 
-    /**
-     * Returns a readable stock status label.
-     */
+    /** Lowest active-variant price — a "from ₱…" display price. */
+    public function getPriceAttribute(): float
+    {
+        return (float) ($this->availableVariants()->min('price') ?? 0);
+    }
+
+    /** Total units across active variants. */
+    public function getStockAttribute(): int
+    {
+        return (int) $this->availableVariants()->sum('stock');
+    }
+
+    /** True when ANY active variant is at or below its threshold. */
+    public function getIsLowStockAttribute(): bool
+    {
+        return $this->availableVariants()->contains(fn ($v) => $v->is_low_stock);
+    }
+
+    /** Worst-case status across active variants. */
     public function getStockStatusAttribute(): string
     {
-        if ($this->stock === 0) {
+        $variants = $this->availableVariants();
+
+        if ($variants->isEmpty() || $variants->every(fn ($v) => $v->stock === 0)) {
             return 'out_of_stock';
         }
 
-        if ($this->is_low_stock) {
+        if ($variants->contains(fn ($v) => $v->is_low_stock)) {
             return 'low_stock';
         }
 
         return 'in_stock';
     }
 
-    // -------------------------------------------------------
-    // Scopes (reusable query filters)
-    // -------------------------------------------------------
-
-    /**
-     * Query only products that are low on stock or out of stock.
-     * Usage: Product::lowStock()->get()
-     */
-    public function scopeLowStock($query)
+    private function availableVariants()
     {
-        return $query->whereColumn('stock', '<=', 'low_stock_threshold');
+        return $this->variants->where('is_archived', false);
     }
 
-    /**
-     * Query only out-of-stock products.
-     * Usage: Product::outOfStock()->get()
-     */
+    // -------------------------------------------------------
+    // Scopes (variant-aware)
+    // -------------------------------------------------------
+
+    /** Products with at least one active variant needing attention. */
+    public function scopeLowStock($query)
+    {
+        return $query->whereHas('variants', fn ($q) => $q
+            ->where('is_archived', false)
+            ->whereColumn('stock', '<=', 'low_stock_threshold'));
+    }
+
+    /** Products with at least one active variant fully sold out. */
     public function scopeOutOfStock($query)
     {
-        return $query->where('stock', 0);
+        return $query->whereHas('variants', fn ($q) => $q
+            ->where('is_archived', false)
+            ->where('stock', 0));
+    }
+
+    /** Products a customer can buy right now. */
+    public function scopePurchasable($query)
+    {
+        return $query->where('is_archived', false)
+            ->whereHas('variants', fn ($q) => $q
+                ->where('is_archived', false)
+                ->where('stock', '>', 0));
     }
 }

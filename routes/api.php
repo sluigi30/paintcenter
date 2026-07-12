@@ -26,13 +26,14 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::post('/auth/logout', [AuthController::class, 'logout']);
     Route::get('/auth/me',      [AuthController::class, 'me']);
 
-    // Cart
+    // Cart — lines are keyed by cart_item_id so the same product can sit
+    // in the cart in several sizes without colliding
     Route::prefix('cart')->group(function () {
         Route::get('/',                  [CartController::class, 'summary']);
         Route::post('/add',              [CartController::class, 'add']);
-        Route::put('/{productId}',       [CartController::class, 'update']);
-        Route::delete('/{productId}',    [CartController::class, 'remove']);
         Route::delete('/',               [CartController::class, 'clear']);
+        Route::put('/{cartItem}',        [CartController::class, 'update']);
+        Route::delete('/{cartItem}',     [CartController::class, 'remove']);
     });
 
     // Orders

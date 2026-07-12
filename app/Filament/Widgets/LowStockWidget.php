@@ -2,12 +2,12 @@
 
 namespace App\Filament\Widgets;
 
-use App\Models\Product;
+use App\Models\ProductVariant;
 use Filament\Actions\Action;
 use Filament\Tables\Columns\TextColumn;
 use Filament\Tables\Table;
 use Filament\Widgets\TableWidget as BaseWidget;
-use Illuminate\Database\Eloquent\Builder;
+
 
 class LowStockWidget extends BaseWidget
 {
@@ -19,35 +19,36 @@ class LowStockWidget extends BaseWidget
 
     protected static ?string $heading = '⚠️ Low Stock & Out of Stock Alerts';
 
-    // Only show this widget if there are actually low stock products
+    // Only show this widget if any size is actually low on stock
     public static function canView(): bool
     {
-        return Product::lowStock()->exists();
+        return ProductVariant::lowStock()->exists();
     }
 
     public function table(Table $table): Table
     {
         return $table
             ->query(
-                Product::query()
-                    ->lowStock()                          // uses scopeLowStock() from File 2
-                    ->with(['brand', 'category'])
+                ProductVariant::query()
+                    ->lowStock()
+                    ->with(['product.brand', 'product.category'])
                     ->orderByRaw('stock ASC')             // worst stock levels first
             )
             ->columns([
-                TextColumn::make('brand.brand_name')
+                TextColumn::make('product.brand.brand_name')
                     ->label('Brand')
                     ->sortable()
                     ->searchable(),
 
-                TextColumn::make('description')
+                TextColumn::make('product.description')
                     ->label('Product')
                     ->limit(45)
-                    ->tooltip(fn ($record) => $record->description)
+                    ->tooltip(fn ($record) => $record->product?->description)
                     ->searchable(),
 
                 TextColumn::make('size_volume')
                     ->label('Size')
+                    ->badge()
                     ->color('gray'),
 
                 TextColumn::make('stock')
@@ -76,7 +77,7 @@ class LowStockWidget extends BaseWidget
                         default        => 'success',
                     }),
 
-                TextColumn::make('category.category_name')
+                TextColumn::make('product.category.category_name')
                     ->label('Category')
                     ->color('gray')
                     ->toggleable(isToggledHiddenByDefault: true),
@@ -88,7 +89,7 @@ class LowStockWidget extends BaseWidget
                     ->label('Restock')
                     ->icon('heroicon-o-plus-circle')
                     ->color('success')
-                    ->modalHeading(fn ($record) => 'Quick Restock — ' . $record->description)
+                    ->modalHeading(fn ($record) => 'Quick Restock — ' . $record->display_name)
                     ->modalDescription(fn ($record) => 'Current stock: ' . $record->stock . ' units')
                     ->modalWidth('sm')
                     ->form([
@@ -104,7 +105,7 @@ class LowStockWidget extends BaseWidget
                             ->placeholder('e.g. Supplier delivery Jan batch')
                             ->rows(2),
                     ])
-                    ->action(function (Product $record, array $data) {
+                    ->action(function (ProductVariant $record, array $data) {
                         \App\Models\InventoryLog::record(
                             $record,
                             'restock',
@@ -119,7 +120,7 @@ class LowStockWidget extends BaseWidget
                             ->send();
                     }),
 
-                // Jump to full inventory page for that product
+                // Jump to full inventory page for that item
                 Action::make('manage')
                     ->label('Manage')
                     ->icon('heroicon-o-arrow-top-right-on-square')
@@ -128,8 +129,8 @@ class LowStockWidget extends BaseWidget
                     ->openUrlInNewTab(false),
             ])
 
-            ->emptyStateHeading('All products are well stocked!')
-            ->emptyStateDescription('No products are currently low or out of stock.')
+            ->emptyStateHeading('All items are well stocked!')
+            ->emptyStateDescription('No sizes are currently low or out of stock.')
             ->emptyStateIcon('heroicon-o-check-badge')
             ->paginated(false);          // show all alerts without pagination
     }

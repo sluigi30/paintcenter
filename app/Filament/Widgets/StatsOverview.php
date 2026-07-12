@@ -4,6 +4,7 @@ namespace App\Filament\Widgets;
 
 use App\Models\Order;
 use App\Models\Product;
+use App\Models\ProductVariant;
 use App\Models\User;
 use Filament\Widgets\StatsOverviewWidget as BaseWidget;
 use Filament\Widgets\StatsOverviewWidget\Stat;
@@ -14,8 +15,9 @@ class StatsOverview extends BaseWidget
 
     protected function getStats(): array
     {
-        $lowStockCount  = Product::lowStock()->where('stock', '>', 0)->count();
-        $outOfStock     = Product::outOfStock()->count();
+        // Stock is tracked per variant (size) — count sizes, not products
+        $lowStockCount  = ProductVariant::lowStock()->where('stock', '>', 0)->count();
+        $outOfStock     = ProductVariant::outOfStock()->count();
         $pendingOrders  = Order::where('status', 'pending')->count();
         $todaySales     = Order::whereDate('created_at', today())
                             ->where('status', '!=', 'cancelled')
@@ -58,11 +60,11 @@ class StatsOverview extends BaseWidget
                 ->color('primary'),
 
             // --- Low Stock Alert ---
-            Stat::make('Low Stock Products', $lowStockCount)
+            Stat::make('Low Stock Items', $lowStockCount)
                 ->description(
                     $lowStockCount > 0
-                        ? "{$lowStockCount} product(s) need restocking soon"
-                        : 'All products are well stocked'
+                        ? "{$lowStockCount} size(s) need restocking soon"
+                        : 'All items are well stocked'
                 )
                 ->descriptionIcon('heroicon-m-exclamation-triangle')
                 ->color($lowStockCount > 0 ? 'warning' : 'success'),
@@ -71,8 +73,8 @@ class StatsOverview extends BaseWidget
             Stat::make('Out of Stock', $outOfStock)
                 ->description(
                     $outOfStock > 0
-                        ? "{$outOfStock} product(s) are completely out of stock"
-                        : 'No products are out of stock'
+                        ? "{$outOfStock} size(s) are completely out of stock"
+                        : 'No items are out of stock'
                 )
                 ->descriptionIcon('heroicon-m-x-circle')
                 ->color($outOfStock > 0 ? 'danger' : 'success'),

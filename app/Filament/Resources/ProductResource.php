@@ -7,6 +7,7 @@ use App\Models\Product;
 use Filament\Actions\Action;
 use Filament\Forms\Components\ColorPicker;
 use Filament\Forms\Components\FileUpload;
+use Filament\Forms\Components\Repeater;
 use Filament\Forms\Components\Select;
 use Filament\Forms\Components\Textarea;
 use Filament\Forms\Components\TextInput;
@@ -50,30 +51,57 @@ class ProductResource extends Resource
                 ->columnSpanFull()
                 ->label('Description'),
 
-            TextInput::make('size_volume')
-                ->label('Size / Volume')
-                ->placeholder('e.g. 1L, 4L, 16L'),
-
             ColorPicker::make('hex_code')
                 ->label('Paint Color'),
-
-            TextInput::make('price')
-                ->required()
-                ->numeric()
-                ->prefix('₱')
-                ->label('Price'),
-
-            TextInput::make('stock')
-                ->required()
-                ->numeric()
-                ->default(0)
-                ->label('Stock'),
 
             FileUpload::make('image')
                 ->image()
                 ->directory('products')
                 ->label('Product Image')
                 ->columnSpanFull(),
+
+            // Each size/volume is its own variant with its own price and
+            // stock. Stock is set here only on creation — afterwards all
+            // stock movements go through Inventory (audit-trailed).
+            Repeater::make('variants')
+                ->relationship()
+                ->label('Sizes / Volumes')
+                ->columnSpanFull()
+                ->columns(4)
+                ->minItems(1)
+                ->defaultItems(1)
+                ->addActionLabel('Add size')
+                ->itemLabel(fn (array $state) => $state['size_volume'] ?? null)
+                ->schema([
+                    TextInput::make('size_volume')
+                        ->label('Size / Volume')
+                        ->placeholder('e.g. 4L')
+                        ->required()
+                        ->maxLength(30)
+                        ->distinct(),
+
+                    TextInput::make('price')
+                        ->label('Price')
+                        ->required()
+                        ->numeric()
+                        ->minValue(0)
+                        ->prefix('₱'),
+
+                    TextInput::make('stock')
+                        ->label('Initial Stock')
+                        ->numeric()
+                        ->minValue(0)
+                        ->default(0)
+                        ->disabledOn('edit')
+                        ->helperText('After creation, adjust via Inventory.'),
+
+                    TextInput::make('low_stock_threshold')
+                        ->label('Alert At')
+                        ->numeric()
+                        ->minValue(1)
+                        ->default(10)
+                        ->required(),
+                ]),
         ]);
     }
     //test comment
@@ -94,16 +122,31 @@ class ProductResource extends Resource
                     ->sortable(),
                 ColorColumn::make('hex_code')
                     ->label('Color'),
-                TextColumn::make('size_volume')
-                    ->label('Size'),
+                // One badge per size, e.g. [1L] [4L] [16L]
+                TextColumn::make('variants.size_volume')
+                    ->label('Sizes')
+                    ->badge()
+                    ->color('gray'),
                 TextColumn::make('price')
                     ->label('Price')
-                    ->money('PHP')
-                    ->sortable(),
+                    ->state(fn (Product $record) => $record->price)
+                    ->formatStateUsing(function (Product $record) {
+                        $prices = $record->variants->where('is_archived', false)->pluck('price');
+                        if ($prices->isEmpty()) {
+                            return '—';
+                        }
+                        $min = number_format($prices->min(), 2);
+                        $max = number_format($prices->max(), 2);
+                        return $min === $max ? "₱{$min}" : "₱{$min} – ₱{$max}";
+                    }),
                 TextColumn::make('stock')
-                    ->label('Stock')
-                    ->sortable()
-                    ->color(fn ($state) => $state < 10 ? 'danger' : 'success'),
+                    ->label('Total Stock')
+                    ->state(fn (Product $record) => $record->stock)
+                    ->color(fn (Product $record) => match ($record->stock_status) {
+                        'out_of_stock' => 'danger',
+                        'low_stock'    => 'warning',
+                        default        => 'success',
+                    }),
                 // Archive status badge
                 TextColumn::make('is_archived')
                     ->label('Status')
@@ -116,15 +159,20 @@ class ProductResource extends Resource
                     ->label('Stock Level')
                     ->options([
                         'attention'    => 'Needs Attention (Low + Out)',
-                        'out_of_stock' => 'Out of Stock',
-                        'low_stock'    => 'Low Stock',
+                        'out_of_stock' => 'Has Out-of-Stock Size',
+                        'low_stock'    => 'Has Low-Stock Size',
                         'in_stock'     => 'Healthy',
                     ])
                     ->query(fn (Builder $query, array $data) => match ($data['value'] ?? null) {
                         'attention'    => $query->lowStock(),
                         'out_of_stock' => $query->outOfStock(),
-                        'low_stock'    => $query->lowStock()->where('stock', '>', 0),
-                        'in_stock'     => $query->whereColumn('stock', '>', 'low_stock_threshold'),
+                        'low_stock'    => $query->whereHas('variants', fn ($q) => $q
+                            ->where('is_archived', false)
+                            ->where('stock', '>', 0)
+                            ->whereColumn('stock', '<=', 'low_stock_threshold')),
+                        'in_stock'     => $query->whereDoesntHave('variants', fn ($q) => $q
+                            ->where('is_archived', false)
+                            ->whereColumn('stock', '<=', 'low_stock_threshold')),
                         default        => $query,
                     }),
 
@@ -165,6 +213,12 @@ class ProductResource extends Resource
                         ->action(fn ($records) => $records->each->update(['is_archived' => true])),
                 ]),
             ]);
+    }
+
+    public static function getEloquentQuery(): Builder
+    {
+        // The Sizes / Price / Total Stock columns all read from variants
+        return parent::getEloquentQuery()->with('variants');
     }
 
     public static function getPages(): array

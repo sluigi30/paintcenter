@@ -8,7 +8,7 @@ use App\Models\InventoryLog;
 use App\Models\Order;
 use App\Models\OrderItem;
 use App\Models\Payment;
-use App\Models\Product;
+use App\Models\ProductVariant;
 use App\Services\SmsService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -18,7 +18,7 @@ class OrderController extends Controller
 {
     public function index(Request $request)
     {
-        $orders = Order::with(['orderItems.product', 'payment'])
+        $orders = Order::with(['orderItems.product', 'orderItems.variant', 'payment'])
             ->where('user_id', $request->user()->id)
             ->orderBy('created_at', 'desc')
             ->get();
@@ -34,7 +34,7 @@ class OrderController extends Controller
             'payment_method'   => 'required|in:cash,gcash,card,cod',
         ]);
 
-        $cartItems = CartItem::with('product')
+        $cartItems = CartItem::with(['product', 'variant'])
             ->where('user_id', $request->user()->id)
             ->get();
 
@@ -48,25 +48,26 @@ class OrderController extends Controller
             $totalAmount = 0;
             $orderItems  = [];
 
-        foreach ($cartItems as $cartItem) {
-            $product = Product::lockForUpdate()->findOrFail($cartItem->product_id);
-            $item = ['quantity' => $cartItem->quantity];
+            foreach ($cartItems as $cartItem) {
+                // Stock is checked and deducted per VARIANT (size)
+                $variant  = ProductVariant::lockForUpdate()->findOrFail($cartItem->product_variant_id);
+                $quantity = $cartItem->quantity;
 
-                if ($product->stock < $item['quantity']) {
+                if ($variant->stock < $quantity) {
                     DB::rollBack();
                     return response()->json([
-                        'message' => "Insufficient stock for {$product->description}.",
+                        'message' => "Insufficient stock for {$cartItem->product->description} ({$variant->size_volume}).",
                     ], 422);
                 }
 
-                $subtotal      = $product->price * $item['quantity'];
+                $subtotal      = $variant->price * $quantity;
                 $totalAmount  += $subtotal;
 
                 $orderItems[] = [
-                    'product'   => $product,
-                    'quantity'  => $item['quantity'],
-                    'unit_price' => $product->price,
-                    'subtotal'  => $subtotal,
+                    'variant'    => $variant,
+                    'quantity'   => $quantity,
+                    'unit_price' => $variant->price,
+                    'subtotal'   => $subtotal,
                 ];
             }
 
@@ -81,19 +82,22 @@ class OrderController extends Controller
 
             foreach ($orderItems as $item) {
                 OrderItem::create([
-                    'order_id'   => $order->id,
-                    'product_id' => $item['product']->id,
-                    'quantity'   => $item['quantity'],
-                    'unit_price' => $item['unit_price'],
-                    'subtotal'   => $item['subtotal'],
+                    'order_id'           => $order->id,
+                    'product_id'         => $item['variant']->product_id,
+                    'product_variant_id' => $item['variant']->id,
+                    'size_volume'        => $item['variant']->size_volume,
+                    'quantity'           => $item['quantity'],
+                    'unit_price'         => $item['unit_price'],
+                    'subtotal'           => $item['subtotal'],
                 ]);
 
-                $item['product']->decrement('stock', $item['quantity']);
+                $item['variant']->decrement('stock', $item['quantity']);
 
                 InventoryLog::create([
-                    'product_id'       => $item['product']->id,
-                    'action_name'      => 'order_placed',
-                    'quantity_changed' => -$item['quantity'],
+                    'product_id'         => $item['variant']->product_id,
+                    'product_variant_id' => $item['variant']->id,
+                    'action_name'        => 'order_placed',
+                    'quantity_changed'   => -$item['quantity'],
                 ]);
             }
 
@@ -122,7 +126,7 @@ class OrderController extends Controller
             }
             return response()->json([
                 'message' => 'Order placed successfully.',
-                'order'   => $order->load(['orderItems.product', 'payment']),
+                'order'   => $order->load(['orderItems.product', 'orderItems.variant', 'payment']),
             ], 201);
 
         } catch (\Exception $e) {
@@ -137,7 +141,7 @@ class OrderController extends Controller
             return response()->json(['message' => 'Unauthorized.'], 403);
         }
 
-        $order->load(['orderItems.product', 'payment']);
+        $order->load(['orderItems.product', 'orderItems.variant', 'payment']);
         return response()->json($order);
     }
 
@@ -155,12 +159,14 @@ class OrderController extends Controller
 
         try {
             foreach ($order->orderItems as $item) {
-                $item->product->increment('stock', $item->quantity);
+                // Restore stock on the exact size that was ordered
+                $item->variant?->increment('stock', $item->quantity);
 
                 InventoryLog::create([
-                    'product_id'       => $item->product_id,
-                    'action_name'      => 'order_cancelled',
-                    'quantity_changed' => $item->quantity,
+                    'product_id'         => $item->product_id,
+                    'product_variant_id' => $item->product_variant_id,
+                    'action_name'        => 'order_cancelled',
+                    'quantity_changed'   => $item->quantity,
                 ]);
             }
 

@@ -6,6 +6,7 @@ use App\Models\InventoryLog;
 use App\Models\Order;
 use App\Models\OrderItem;
 use App\Models\Product;
+use App\Models\ProductVariant;
 use App\Models\User;
 use Filament\Pages\Page;
 use Illuminate\Support\Carbon;
@@ -35,10 +36,6 @@ class Reports extends Page
 
     #[Url]
     public bool $compareEnabled = false;
-
-    // ── Quick Preset ───────────────────────────────────────
-    #[Url]
-    public string $preset = '30';
 
     // ── KPI Cards ──────────────────────────────────────────
     public float $totalRevenue      = 0;
@@ -81,30 +78,11 @@ class Reports extends Page
         $this->loadReports();
     }
 
-    public function updatedDateFrom(): void  { $this->preset = 'custom'; $this->loadReports(); }
-    public function updatedDateTo(): void    { $this->preset = 'custom'; $this->loadReports(); }
+    public function updatedDateFrom(): void  { $this->autoSetComparePeriod(); $this->loadReports(); }
+    public function updatedDateTo(): void    { $this->autoSetComparePeriod(); $this->loadReports(); }
     public function updatedCompareFrom(): void  { $this->loadReports(); }
     public function updatedCompareTo(): void    { $this->loadReports(); }
     public function updatedCompareEnabled(): void { $this->loadReports(); }
-
-    public function applyPreset(string $p): void
-    {
-        $this->preset = $p;
-        match ($p) {
-            '7'   => [$this->dateFrom, $this->dateTo] = [now()->subDays(6)->format('Y-m-d'),  now()->format('Y-m-d')],
-            '30'  => [$this->dateFrom, $this->dateTo] = [now()->subDays(29)->format('Y-m-d'), now()->format('Y-m-d')],
-            '90'  => [$this->dateFrom, $this->dateTo] = [now()->subDays(89)->format('Y-m-d'), now()->format('Y-m-d')],
-            '365' => [$this->dateFrom, $this->dateTo] = [now()->startOfYear()->format('Y-m-d'), now()->format('Y-m-d')],
-            'mtd' => [$this->dateFrom, $this->dateTo] = [now()->startOfMonth()->format('Y-m-d'), now()->format('Y-m-d')],
-            'lm'  => [$this->dateFrom, $this->dateTo] = [
-                now()->subMonth()->startOfMonth()->format('Y-m-d'),
-                now()->subMonth()->endOfMonth()->format('Y-m-d'),
-            ],
-            default => null,
-        };
-        $this->autoSetComparePeriod();
-        $this->loadReports();
-    }
 
     private function autoSetComparePeriod(): void
     {
@@ -136,16 +114,19 @@ class Reports extends Page
         [$from, $to]   = $this->mainRange();
         [$cFrom, $cTo] = $this->compareRange();
 
-        $days = $from->diffInDays($to) + 1;
+        // dayCount() works on bare dates — diffInDays() against an endOfDay
+        // timestamp returns a float (30.99…) that misclassified 31-day
+        // ranges as monthly.
+        $daily = $this->dayCount() <= 31;
 
         // ── Cross-database date grouping ───────────────────
         $driver = DB::getDriverName();
         if ($driver === 'sqlite') {
-            $dateFmt = $days <= 31
+            $dateFmt = $daily
                 ? "strftime('%Y-%m-%d', created_at)"
                 : "strftime('%Y-%m', created_at)";
         } else {
-            $dateFmt = $days <= 31
+            $dateFmt = $daily
                 ? "DATE_FORMAT(created_at, '%Y-%m-%d')"
                 : "DATE_FORMAT(created_at, '%Y-%m')";
         }
@@ -177,30 +158,24 @@ class Reports extends Page
         $this->pendingOrders = Order::where('status', 'pending')->count();
 
         // ── Sales Chart ────────────────────────────────────
-        $this->salesChart = Order::whereBetween('created_at', [$from, $to])
+        $salesRows = Order::whereBetween('created_at', [$from, $to])
             ->where('status', '!=', 'cancelled')
             ->selectRaw("{$dateFmt} as label, SUM(total_amount) as revenue, COUNT(*) as orders")
             ->groupByRaw($dateFmt)
-            ->orderByRaw($dateFmt)
             ->get()
-            ->map(fn ($row) => [
-                'label'   => $row->label,
-                'revenue' => (float) $row->revenue,
-                'orders'  => (int) $row->orders,
-            ])->toArray();
+            ->keyBy('label');
+
+        $this->salesChart = $this->fillSeries($salesRows, $from, $to, $daily);
 
         $this->compareChart = $this->compareEnabled
-            ? Order::whereBetween('created_at', [$cFrom, $cTo])
-                ->where('status', '!=', 'cancelled')
-                ->selectRaw("{$dateFmt} as label, SUM(total_amount) as revenue, COUNT(*) as orders")
-                ->groupByRaw($dateFmt)
-                ->orderByRaw($dateFmt)
-                ->get()
-                ->map(fn ($row) => [
-                    'label'   => $row->label,
-                    'revenue' => (float) $row->revenue,
-                    'orders'  => (int) $row->orders,
-                ])->toArray()
+            ? $this->fillSeries(
+                Order::whereBetween('created_at', [$cFrom, $cTo])
+                    ->where('status', '!=', 'cancelled')
+                    ->selectRaw("{$dateFmt} as label, SUM(total_amount) as revenue, COUNT(*) as orders")
+                    ->groupByRaw($dateFmt)
+                    ->get()
+                    ->keyBy('label'),
+                $cFrom, $cTo, $daily)
             : [];
 
         // ── Orders by Status ───────────────────────────────
@@ -266,13 +241,13 @@ class Reports extends Page
                 'date'     => $order->created_at->format('M d, Y'),
             ])->toArray();
 
-        // ── Inventory Stats ────────────────────────────────
+        // ── Inventory Stats (stock lives per variant/size) ─
         $this->inventoryStats = [
             'total_products' => Product::count(),
-            'total_stock'    => Product::sum('stock'),
-            'low_stock'      => Product::lowStock()->where('stock', '>', 0)->count(),
-            'out_of_stock'   => Product::outOfStock()->count(),
-            'stock_value'    => Product::selectRaw('SUM(stock * price) as value')->value('value') ?? 0,
+            'total_stock'    => ProductVariant::sum('stock'),
+            'low_stock'      => ProductVariant::lowStock()->where('stock', '>', 0)->count(),
+            'out_of_stock'   => ProductVariant::outOfStock()->count(),
+            'stock_value'    => ProductVariant::selectRaw('SUM(stock * price) as value')->value('value') ?? 0,
         ];
 
         // ── Recent Inventory Logs ──────────────────────────
@@ -293,6 +268,30 @@ class Reports extends Page
             status:         $this->ordersByStatus,
             compareEnabled: $this->compareEnabled,
         );
+    }
+
+    /**
+     * Expand grouped query rows into a gapless series over the whole range —
+     * days/months with no sales become zero points so the line chart always
+     * spans the selected period instead of collapsing to scattered dots.
+     */
+    private function fillSeries(\Illuminate\Support\Collection $rows, Carbon $from, Carbon $to, bool $daily): array
+    {
+        $series = [];
+        $cursor = $daily ? $from->copy()->startOfDay() : $from->copy()->startOfMonth();
+
+        while ($cursor->lte($to)) {
+            $key = $cursor->format($daily ? 'Y-m-d' : 'Y-m');
+            $row = $rows->get($key);
+            $series[] = [
+                'label'   => $cursor->format($daily ? 'M d' : 'M Y'),
+                'revenue' => (float) ($row->revenue ?? 0),
+                'orders'  => (int) ($row->orders ?? 0),
+            ];
+            $daily ? $cursor->addDay() : $cursor->addMonth();
+        }
+
+        return $series;
     }
 
     // ── Helpers ────────────────────────────────────────────
