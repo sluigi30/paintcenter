@@ -12,13 +12,27 @@ class AuthController extends Controller
 {
     public function register(Request $request)
     {
+        // People type mobile numbers with spaces, dashes and brackets. Strip
+        // those before validating rather than rejecting a number that is
+        // perfectly valid to a human.
+        if (is_string($request->input('phone'))) {
+            $request->merge([
+                'phone' => preg_replace('/[^0-9+]/', '', $request->input('phone')),
+            ]);
+        }
+
         $validated = $request->validate([
             'first_name'  => 'required|string|max:255',
             'last_name'   => 'required|string|max:255',
-            'phone'       => 'nullable|string|max:20',
-            'email'       => 'required|email|unique:users,email',
+            // Required, not nullable: order updates go out by SMS, and
+            // OrderController::store skips sending when phone is null — so a
+            // customer without one silently never hears about their order.
+            'phone'       => ['required', 'string', 'max:20', 'regex:/^(\+?63|0)9\d{9}$/'],
+            'email'       => 'required|email|max:255|unique:users,email',
             'password'    => 'required|string|min:8|confirmed',
             'address'     => 'nullable|string',
+        ], [
+            'phone.regex' => 'Enter a valid PH mobile number, e.g. 09171234567.',
         ]);
 
         $user = User::create([

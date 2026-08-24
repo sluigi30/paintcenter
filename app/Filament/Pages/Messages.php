@@ -15,9 +15,14 @@ class Messages extends Page
     protected static string|\BackedEnum|null $navigationIcon = 'heroicon-o-chat-bubble-left-right';
 
     public ?int $selectedUserId = null;
+    public ?string $selectedUserName = null;
     public string $newMessage = '';
     public Collection $conversations;
     public Collection $thread;
+
+    /** Compose mode: pick any customer and start a thread from scratch. */
+    public bool $composing = false;
+    public string $customerSearch = '';
 
     /** All admin-side user ids — the inbox is shared across every admin. */
     public array $adminIds = [];
@@ -112,9 +117,62 @@ class Messages extends Page
 
     public function selectUser(int $userId): void
     {
-        $this->selectedUserId = $userId;
+        $this->selectedUserId   = $userId;
+        $this->selectedUserName = $this->customerName($userId);
         $this->loadThread();
         $this->loadConversations();
+    }
+
+    /**
+     * Customers the admin can start a thread with. The inbox itself is built
+     * from existing messages, so without this an admin can only ever reply —
+     * a customer who has never written in is unreachable.
+     */
+    public function customerList(): Collection
+    {
+        $term = trim($this->customerSearch);
+
+        return User::query()
+            ->customers()
+            ->where('is_archived', false)
+            ->when($term !== '', function ($query) use ($term) {
+                $like = '%' . $term . '%';
+                $query->where(fn ($q) => $q->where('first_name', 'like', $like)
+                    ->orWhere('last_name', 'like', $like)
+                    ->orWhere('email', 'like', $like));
+            })
+            ->orderBy('first_name')
+            ->limit(50)
+            ->get()
+            ->map(fn ($user) => [
+                'user_id' => $user->id,
+                'name'    => trim($user->first_name . ' ' . $user->last_name) ?: $user->email,
+                'email'   => $user->email,
+            ]);
+    }
+
+    public function toggleCompose(): void
+    {
+        $this->composing      = ! $this->composing;
+        $this->customerSearch = '';
+    }
+
+    public function startConversation(int $userId): void
+    {
+        $this->composing      = false;
+        $this->customerSearch = '';
+        $this->selectUser($userId);
+    }
+
+    protected function customerName(int $userId): ?string
+    {
+        $user = User::find($userId);
+
+        if (! $user) {
+            return null;
+        }
+
+        return trim($user->first_name . ' ' . $user->last_name) ?: $user->email;
     }
 
     /** Called by wire:poll — refreshes the inbox without a page reload. */

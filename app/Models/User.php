@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use App\Models\Concerns\TracksActivity;
 use Filament\Models\Contracts\FilamentUser;
 use Filament\Panel;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
@@ -11,7 +12,12 @@ use Laravel\Sanctum\HasApiTokens;
 
 class User extends Authenticatable implements FilamentUser
 {
-    use HasApiTokens, HasFactory, Notifiable;
+    use HasApiTokens, HasFactory, Notifiable, TracksActivity;
+
+    public function activityTitle(): string
+    {
+        return $this->name . ' (' . $this->role . ')';
+    }
 
     protected $fillable = [
         'role',
@@ -56,6 +62,27 @@ class User extends Authenticatable implements FilamentUser
     public function canAccessPanel(Panel $panel): bool
     {
         return ($this->isAdmin() || $this->isSuperAdmin()) && !$this->is_archived;
+    }
+
+    /** Every admin-side account, archived ones included. */
+    public function scopeAdmins($query)
+    {
+        return $query->whereIn('role', ['admin', 'super_admin']);
+    }
+
+    public function scopeCustomers($query)
+    {
+        return $query->where('role', 'customer');
+    }
+
+    /**
+     * The account the store speaks through — used as the sender for automated
+     * order messages and as the reply-to the mobile app is handed. Archived
+     * admins must never receive or send new messages.
+     */
+    public static function activeAdmin(): ?self
+    {
+        return static::query()->admins()->where('is_archived', false)->orderBy('id')->first();
     }
 
     public function isSuperAdmin(): bool

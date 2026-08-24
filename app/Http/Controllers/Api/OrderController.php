@@ -9,6 +9,8 @@ use App\Models\Order;
 use App\Models\OrderItem;
 use App\Models\Payment;
 use App\Models\ProductVariant;
+use App\Services\OrderCancellationService;
+use App\Services\OrderMessageService;
 use App\Services\SmsService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -18,7 +20,7 @@ class OrderController extends Controller
 {
     public function index(Request $request)
     {
-        $orders = Order::with(['orderItems.product', 'orderItems.variant', 'payment'])
+        $orders = Order::with(['orderItems.product.brand', 'orderItems.variant', 'payment'])
             ->where('user_id', $request->user()->id)
             ->orderBy('created_at', 'desc')
             ->get();
@@ -32,14 +34,25 @@ class OrderController extends Controller
             'order_type'       => 'required|in:delivery,pickup',
             'shipping_address' => 'required_if:order_type,delivery|nullable|string',
             'payment_method'   => 'required|in:cash,gcash,card,cod',
+            'cart_item_ids'    => 'sometimes|array|min:1',
+            'cart_item_ids.*'  => 'integer',
         ]);
+
+        // Partial checkout: the client may tick only some cart lines (Shopee/Lazada
+        // style). Omitting cart_item_ids checks out the whole cart, as before.
+        $selectedIds = $validated['cart_item_ids'] ?? null;
 
         $cartItems = CartItem::with(['product', 'variant'])
             ->where('user_id', $request->user()->id)
+            ->when($selectedIds, fn ($q) => $q->whereIn('id', $selectedIds))
             ->get();
 
         if ($cartItems->isEmpty()) {
-            return response()->json(['message' => 'Cart is empty.'], 422);
+            return response()->json([
+                'message' => $selectedIds
+                    ? 'No items selected for checkout.'
+                    : 'Cart is empty.',
+            ], 422);
         }
 
         DB::beginTransaction();
@@ -108,9 +121,18 @@ class OrderController extends Controller
                 'payment_date'   => null,
             ]);
 
-            CartItem::where('user_id', $request->user()->id)->delete();
+            // Only the lines that were actually ordered leave the cart — unticked
+            // items stay put for the next order
+            CartItem::where('user_id', $request->user()->id)
+                ->whereIn('id', $cartItems->pluck('id'))
+                ->delete();
 
             DB::commit();
+
+            // Post the order summary into the customer's message thread. Also
+            // opens a thread the admin can reply in — customers who have never
+            // messaged are otherwise unreachable from the admin inbox.
+            OrderMessageService::orderPlaced($order);
 
             $smsService = new SmsService();
             $phone = $request->user()->phone;
@@ -126,7 +148,7 @@ class OrderController extends Controller
             }
             return response()->json([
                 'message' => 'Order placed successfully.',
-                'order'   => $order->load(['orderItems.product', 'orderItems.variant', 'payment']),
+                'order'   => $order->load(['orderItems.product.brand', 'orderItems.variant', 'payment']),
             ], 201);
 
         } catch (\Exception $e) {
@@ -141,7 +163,7 @@ class OrderController extends Controller
             return response()->json(['message' => 'Unauthorized.'], 403);
         }
 
-        $order->load(['orderItems.product', 'orderItems.variant', 'payment']);
+        $order->load(['orderItems.product.brand', 'orderItems.variant', 'payment']);
         return response()->json($order);
     }
 
@@ -151,34 +173,22 @@ class OrderController extends Controller
             return response()->json(['message' => 'Unauthorized.'], 403);
         }
 
-        if (!in_array($order->status, ['pending', 'processing'])) {
+        if (! OrderCancellationService::canCancel($order)) {
             return response()->json(['message' => 'Order cannot be cancelled.'], 422);
         }
 
-        DB::beginTransaction();
+        // A reason is required. The client offers Order::CUSTOMER_CANCEL_REASONS
+        // as presets plus a free-text "Other", so any string is acceptable here.
+        $validated = $request->validate([
+            'reason' => 'required|string|max:500',
+        ]);
 
         try {
-            foreach ($order->orderItems as $item) {
-                // Restore stock on the exact size that was ordered
-                $item->variant?->increment('stock', $item->quantity);
-
-                InventoryLog::create([
-                    'product_id'         => $item->product_id,
-                    'product_variant_id' => $item->product_variant_id,
-                    'action_name'        => 'order_cancelled',
-                    'quantity_changed'   => $item->quantity,
-                ]);
-            }
-
-            $order->update(['status' => 'cancelled']);
-            $order->payment->update(['payment_status' => 'refunded']);
-
-            DB::commit();
+            OrderCancellationService::cancel($order, $validated['reason'], $request->user()->id);
 
             return response()->json(['message' => 'Order cancelled successfully.']);
 
         } catch (\Exception $e) {
-            DB::rollBack();
             return response()->json(['message' => 'Cancellation failed.'], 500);
         }
     }

@@ -4,6 +4,9 @@ namespace App\Filament\Resources;
 
 use App\Filament\Resources\OrderResource\Pages;
 use App\Models\Order;
+use App\Services\OrderCancellationService;
+use Filament\Actions\Action;
+use Filament\Notifications\Notification;
 use Filament\Resources\Resource;
 use Filament\Schemas\Schema;
 use Filament\Forms\Components\Select;
@@ -32,15 +35,23 @@ class OrderResource extends Resource
                 ->label('User ID')
                 ->disabled(),
 
+            // 'cancelled' is deliberately absent — cancelling goes through the
+            // Cancel action so a reason is always captured and stock is always
+            // restored. An already-cancelled order keeps showing its status.
             Select::make('status')
-                ->options([
-                    'pending'          => 'Pending',
-                    'processing'       => 'Processing',
-                    'shipped'          => 'Shipped',
-                    'ready_for_pickup' => 'Ready for Pickup',
-                    'completed'        => 'Completed',
-                    'cancelled'        => 'Cancelled',
-                ])
+                ->options(fn ($record) => $record?->status === 'cancelled'
+                    ? ['cancelled' => 'Cancelled']
+                    : [
+                        'pending'          => 'Pending',
+                        'processing'       => 'Processing',
+                        'shipped'          => 'Shipped',
+                        'ready_for_pickup' => 'Ready for Pickup',
+                        'completed'        => 'Completed',
+                    ])
+                ->disabled(fn ($record) => $record?->status === 'cancelled')
+                ->helperText(fn ($record) => $record?->status === 'cancelled'
+                    ? null
+                    : 'To cancel this order, use the Cancel Order action — it records a reason and returns stock.')
                 ->required(),
 
             Select::make('order_type')
@@ -58,6 +69,16 @@ class OrderResource extends Resource
             Textarea::make('shipping_address')
                 ->label('Shipping Address')
                 ->disabled()
+                ->columnSpanFull(),
+
+            Textarea::make('cancellation_reason')
+                ->label('Cancellation Reason')
+                ->disabled()
+                ->visible(fn ($record) => filled($record?->cancellation_reason))
+                ->helperText(fn ($record) => $record?->cancelled_at
+                    ? 'Cancelled by ' . ($record->cancelledByCustomer() ? 'the customer' : ($record->cancelledBy?->name ?? 'the store'))
+                        . ' on ' . $record->cancelled_at->format('M j, Y \a\t g:i A')
+                    : null)
                 ->columnSpanFull(),
         ]);
     }
@@ -80,6 +101,11 @@ class OrderResource extends Resource
                 TextColumn::make('status')
                     ->label('Status')
                     ->badge()
+                    // Surface why straight in the list — a cancelled row is the
+                    // one an admin most needs context on at a glance
+                    ->description(fn($record) => $record->status === 'cancelled'
+                        ? $record->cancellation_reason
+                        : null)
                     ->color(fn($state) => match($state) {
                         'pending'          => 'warning',
                         'processing'       => 'info',
@@ -111,15 +137,17 @@ class OrderResource extends Resource
                     ->sortable(),
             ])
             ->filters([
+                // The list page's tabs already split completed and cancelled off,
+                // so this only narrows within the "To Process" work list —
+                // offering Completed here would just return nothing.
                 SelectFilter::make('status')
                     ->options([
                         'pending'          => 'Pending',
                         'processing'       => 'Processing',
                         'shipped'          => 'Shipped',
                         'ready_for_pickup' => 'Ready for Pickup',
-                        'completed'        => 'Completed',
-                        'cancelled'        => 'Cancelled',
-                    ]),
+                    ])
+                    ->visible(fn ($livewire) => ($livewire->activeTab ?? 'active') === 'active'),
                 SelectFilter::make('order_type')
                     ->options([
                         'delivery' => 'Delivery',
@@ -160,6 +188,45 @@ class OrderResource extends Resource
             ->filtersFormColumns(2)
            ->actions([
                 \Filament\Actions\EditAction::make(),
+
+                Action::make('cancelOrder')
+                    ->label('Cancel')
+                    ->icon('heroicon-o-x-circle')
+                    ->color('danger')
+                    ->visible(fn (Order $record) => OrderCancellationService::canCancel($record))
+                    ->modalHeading('Cancel Order')
+                    ->modalDescription('Stock will be returned and the customer will be messaged with the reason.')
+                    ->modalSubmitActionLabel('Cancel Order')
+                    ->schema([
+                        Select::make('preset')
+                            ->label('Reason')
+                            ->options(
+                                array_combine(Order::ADMIN_CANCEL_REASONS, Order::ADMIN_CANCEL_REASONS)
+                                + ['other' => 'Other (type below)']
+                            )
+                            ->required()
+                            ->live(),
+
+                        Textarea::make('other_reason')
+                            ->label('Reason')
+                            ->placeholder('Tell the customer what happened...')
+                            ->maxLength(500)
+                            ->visible(fn ($get) => $get('preset') === 'other')
+                            ->required(fn ($get) => $get('preset') === 'other'),
+                    ])
+                    ->action(function (Order $record, array $data) {
+                        $reason = $data['preset'] === 'other'
+                            ? trim((string) $data['other_reason'])
+                            : $data['preset'];
+
+                        OrderCancellationService::cancel($record, $reason, auth()->id());
+
+                        Notification::make()
+                            ->title('Order cancelled')
+                            ->body('Stock has been returned and the customer has been messaged with the reason.')
+                            ->success()
+                            ->send();
+                    }),
             ])
             ->defaultSort('created_at', 'desc');
     }

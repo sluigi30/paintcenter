@@ -68,6 +68,28 @@ html.dark #msg-root{
 
 .msg-empty-side{padding:24px 16px;font-size:13px;color:var(--msg-text-3);text-align:center}
 
+/* ── Compose (start a new conversation) ── */
+.msg-new-btn{display:inline-flex;align-items:center;gap:5px;padding:5px 10px;border:none;
+    border-radius:8px;font-size:11.5px;font-weight:700;color:#fff;cursor:pointer;
+    background:linear-gradient(180deg,var(--msg-brand-hi),var(--msg-brand));
+    box-shadow:0 1px 3px rgba(185,28,28,.3);transition:all .15s;white-space:nowrap}
+.msg-new-btn:hover{background:linear-gradient(180deg,var(--msg-brand),var(--msg-brand-dark))}
+.msg-new-btn.is-open{background:none;color:var(--msg-text-2);box-shadow:none;
+    border:1px solid var(--msg-border)}
+.msg-new-btn.is-open:hover{background:var(--msg-hover)}
+.msg-search-wrap{padding:10px 12px;border-bottom:1px solid var(--msg-border);
+    background:var(--msg-panel-alt)}
+.msg-search{width:100%;padding:7px 11px;border-radius:8px;font-size:12.5px;font-family:inherit;
+    background:var(--msg-input-bg);border:1px solid var(--msg-border);
+    color:var(--msg-text);outline:none;transition:border-color .15s,box-shadow .15s}
+.msg-search::placeholder{color:var(--msg-text-3)}
+.msg-search:focus{border-color:var(--msg-brand);box-shadow:0 0 0 3px rgba(185,28,28,.12)}
+.msg-cust-email{font-size:11px;color:var(--msg-text-3);
+    overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+
+.msg-thread-hint{margin:auto;max-width:290px;text-align:center;font-size:12.5px;
+    line-height:1.5;color:var(--msg-text-3)}
+
 /* ── Thread panel ── */
 .msg-main{flex:1;display:flex;flex-direction:column;min-width:0;overflow:hidden;
     background:var(--msg-panel);border:1px solid var(--msg-border);border-radius:14px;
@@ -139,11 +161,50 @@ html.dark #msg-root{
     {{-- Conversations list --}}
     <div class="msg-side">
         <div class="msg-side-head">
-            <p class="msg-side-title">Conversations</p>
-            @if($totalUnread > 0)
-                <span class="msg-side-count">{{ $totalUnread }} new</span>
-            @endif
+            <p class="msg-side-title">{{ $composing ? 'New Message' : 'Conversations' }}</p>
+            <div style="display:flex;align-items:center;gap:7px">
+                @if(! $composing && $totalUnread > 0)
+                    <span class="msg-side-count">{{ $totalUnread }} new</span>
+                @endif
+                <button wire:click="toggleCompose" class="msg-new-btn {{ $composing ? 'is-open' : '' }}">
+                    @if($composing)
+                        Cancel
+                    @else
+                        <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round">
+                            <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
+                        </svg>
+                        New
+                    @endif
+                </button>
+            </div>
         </div>
+
+        @if($composing)
+            {{-- Customer picker — lets an admin write first --}}
+            <div class="msg-search-wrap">
+                <input
+                    wire:model.live.debounce.300ms="customerSearch"
+                    type="text"
+                    placeholder="Search customers by name or email..."
+                    class="msg-search"
+                />
+            </div>
+            <div class="msg-side-list">
+                @forelse($this->customerList() as $customer)
+                    <div wire:click="startConversation({{ $customer['user_id'] }})" class="msg-conv">
+                        <div class="msg-avatar">{{ $initials($customer['name']) }}</div>
+                        <div class="msg-conv-body">
+                            <div class="msg-conv-name">{{ $customer['name'] }}</div>
+                            <div class="msg-cust-email">{{ $customer['email'] }}</div>
+                        </div>
+                    </div>
+                @empty
+                    <div class="msg-empty-side">
+                        {{ trim($customerSearch) !== '' ? 'No customers match that search.' : 'No customers yet.' }}
+                    </div>
+                @endforelse
+            </div>
+        @else
         <div class="msg-side-list">
             @forelse($conversations as $conv)
                 <div
@@ -168,21 +229,29 @@ html.dark #msg-root{
                 <div class="msg-empty-side">No conversations yet.</div>
             @endforelse
         </div>
+        @endif
     </div>
 
     {{-- Message thread --}}
     <div class="msg-main">
         @if($selectedUserId)
             <div class="msg-main-head">
-                <div class="msg-avatar" style="width:34px;height:34px;font-size:12.5px">{{ $initials($selectedConv['name'] ?? '?') }}</div>
+                @php $headName = $selectedUserName ?? ($selectedConv['name'] ?? 'Conversation'); @endphp
+                <div class="msg-avatar" style="width:34px;height:34px;font-size:12.5px">{{ $initials($headName) }}</div>
                 <div>
-                    <p class="msg-main-name">{{ $selectedConv['name'] ?? 'Conversation' }}</p>
+                    <p class="msg-main-name">{{ $headName }}</p>
                     <p class="msg-main-sub">Customer conversation</p>
                 </div>
             </div>
 
             {{-- Messages --}}
             <div id="msg-thread" data-user="{{ $selectedUserId }}">
+                @if($thread->isEmpty())
+                    <p class="msg-thread-hint">
+                        No messages with {{ $headName }} yet.<br>
+                        Write below to start the conversation.
+                    </p>
+                @endif
                 @foreach($thread as $message)
                     @php $isStoreSide = in_array($message->sender_id, $adminIds); @endphp
                     <div class="msg-row {{ $isStoreSide ? 'out' : 'in' }}">

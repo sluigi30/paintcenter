@@ -13,7 +13,7 @@ class MessageController extends Controller
     // that historically went to them keep their message history.
     private function adminIds(): array
     {
-        return User::whereIn('role', ['admin', 'super_admin'])->pluck('id')->all();
+        return User::query()->admins()->pluck('id')->all();
     }
 
     // Get all conversations for the current user
@@ -120,10 +120,7 @@ class MessageController extends Controller
     // Archived admins must never receive new messages.
     public function getAdmin()
     {
-        $admin = User::whereIn('role', ['admin', 'super_admin'])
-            ->where('is_archived', false)
-            ->orderBy('id')
-            ->first();
+        $admin = User::activeAdmin();
 
         if (!$admin) {
             return response()->json(['message' => 'No admin found.'], 404);

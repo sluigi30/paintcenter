@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use App\Models\Concerns\TracksActivity;
 use App\Observers\ProductVariantObserver;
 use Illuminate\Database\Eloquent\Attributes\ObservedBy;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
@@ -14,7 +15,18 @@ use Illuminate\Database\Eloquent\Model;
 #[ObservedBy(ProductVariantObserver::class)]
 class ProductVariant extends Model
 {
-    use HasFactory;
+    use HasFactory, TracksActivity;
+
+    public function activityTitle(): string
+    {
+        return $this->display_name;
+    }
+
+    /** Stock moves are audited in full by InventoryLog — don't double-log them here. */
+    public function activityIgnored(): array
+    {
+        return ['stock'];
+    }
 
     protected $fillable = [
         'product_id',

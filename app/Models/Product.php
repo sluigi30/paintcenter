@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use App\Models\Concerns\TracksActivity;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 
@@ -13,7 +14,18 @@ use Illuminate\Database\Eloquent\Model;
  */
 class Product extends Model
 {
-    use HasFactory;
+    use HasFactory, TracksActivity;
+
+    public function activityTitle(): string
+    {
+        return $this->description ?? 'Product #' . $this->getKey();
+    }
+
+    /** The images gallery is bulky JSON — record that it changed, not the blob. */
+    public function activityIgnored(): array
+    {
+        return ['images'];
+    }
 
     protected $fillable = [
         'category_id',

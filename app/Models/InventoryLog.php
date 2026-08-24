@@ -107,7 +107,7 @@ class InventoryLog extends Model
         $variant->increment('stock', $quantity);
 
         // Write the log entry
-        return self::create([
+        $log = self::create([
             'product_id'         => $variant->product_id,
             'product_variant_id' => $variant->id,
             'admin_id'           => auth()->id(),
@@ -115,5 +115,43 @@ class InventoryLog extends Model
             'quantity_changed'   => $quantity,
             'notes'              => $notes,
         ]);
+
+        // Mirror the stock move into the unified admin audit trail so a
+        // super admin sees inventory management alongside every other
+        // action. Only records when an admin is authenticated.
+        ActivityLog::log(
+            event: 'inventory',
+            subject: $variant,
+            description: sprintf(
+                '%s %s on %s — now %d in stock%s',
+                self::actionVerb($action),
+                ($quantity >= 0 ? '+' : '') . $quantity . ' ' . \Illuminate\Support\Str::plural('unit', abs($quantity)),
+                $variant->display_name,
+                $variant->stock,
+                $notes ? " ({$notes})" : ''
+            ),
+            properties: [
+                'action'    => $action,
+                'quantity'  => $quantity,
+                'new_stock' => $variant->stock,
+                'notes'     => $notes,
+            ],
+        );
+
+        return $log;
+    }
+
+    /**
+     * Verb used in the activity-feed sentence for each stock action.
+     */
+    protected static function actionVerb(string $action): string
+    {
+        return match ($action) {
+            'restock'      => 'Restocked',
+            'deduct'       => 'Deducted',
+            'order_deduct' => 'Order deduction',
+            'adjustment'   => 'Adjusted',
+            default        => ucfirst($action),
+        };
     }
 }
