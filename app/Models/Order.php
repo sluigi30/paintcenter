@@ -40,6 +40,24 @@ class Order extends Model
     }
 
     /**
+     * Both are appended so the CLIENT never has to re-derive the cancel rule.
+     * It differs for custom orders, and a copy of that logic in the app would
+     * drift from the server's — offering a Cancel button the API then refuses.
+     */
+    protected $appends = ['has_custom_items', 'can_cancel'];
+
+    /** True when any line is custom-tinted, i.e. mixed to a chosen colour. */
+    public function getHasCustomItemsAttribute(): bool
+    {
+        return $this->orderItems->contains(fn ($item) => $item->custom_hex !== null);
+    }
+
+    public function getCanCancelAttribute(): bool
+    {
+        return \App\Services\OrderCancellationService::canCustomerCancel($this);
+    }
+
+    /**
      * Preset cancellation reasons. These are UI suggestions only — both cancel
      * paths also accept free text typed under "Other", so the stored value is
      * never constrained to this list.

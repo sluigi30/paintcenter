@@ -31,7 +31,9 @@ class ProductVariant extends Model
     protected $fillable = [
         'product_id',
         'size_volume',
+        'base_code',   // '' = no base distinction; 'P' pastel, 'M' medium, 'D' deep
         'price',
+        'tint_fee',    // charged on top of price when this can is tinted
         'stock',
         'low_stock_threshold',
         'is_archived',
@@ -39,6 +41,7 @@ class ProductVariant extends Model
 
     protected $casts = [
         'price'       => 'float',
+        'tint_fee'    => 'float',
         'stock'       => 'integer',
         'is_archived' => 'boolean',
     ];

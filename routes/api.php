@@ -3,6 +3,7 @@
 use App\Http\Controllers\Api\MessageController;
 use App\Http\Controllers\Api\AuthController;
 use App\Http\Controllers\Api\CartController;
+use App\Http\Controllers\Api\ColorController;
 use App\Http\Controllers\Api\OrderController;
 use App\Http\Controllers\Api\ProductController;
 use Illuminate\Support\Facades\Route;
@@ -19,6 +20,10 @@ Route::get('/products/{product}',  [ProductController::class, 'show']);
 Route::get('/brands',              [ProductController::class, 'brands']);
 Route::get('/brands/{brand}/categories', [ProductController::class, 'brandCategories']);
 Route::get('/categories',          [ProductController::class, 'categories']);
+
+// Custom colour: which base a picked colour needs, and whether paint can
+// reach it at all. Public — choosing a colour precedes any intent to buy.
+Route::get('/colors/resolve',      [ColorController::class, 'resolve']);
 
 // Protected routes
 Route::middleware('auth:sanctum')->group(function () {

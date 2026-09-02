@@ -17,9 +17,31 @@ class OrderCancellationService
     /** Past this point the goods have moved and cancelling is a manual matter. */
     public const CANCELLABLE_STATUSES = ['pending', 'processing'];
 
+    /**
+     * An order carrying custom-tinted lines closes earlier. Mixing happens
+     * during `processing`, and a tinted can cannot be un-tinted or resold —
+     * once the machine has dispensed, the base is spent and the shop eats it.
+     */
+    public const CUSTOM_CANCELLABLE_STATUSES = ['pending'];
+
+    /**
+     * The admin's rule, unchanged. Staff know whether a can has actually been
+     * mixed yet; they may still need to cancel during processing for stock
+     * reasons, so this is deliberately NOT narrowed for custom orders.
+     */
     public static function canCancel(Order $order): bool
     {
         return in_array($order->status, self::CANCELLABLE_STATUSES, true);
+    }
+
+    /** The customer's rule — narrower, because they cannot see the counter. */
+    public static function canCustomerCancel(Order $order): bool
+    {
+        $allowed = $order->has_custom_items
+            ? self::CUSTOM_CANCELLABLE_STATUSES
+            : self::CANCELLABLE_STATUSES;
+
+        return in_array($order->status, $allowed, true);
     }
 
     public static function cancel(Order $order, string $reason, int $cancelledById): void

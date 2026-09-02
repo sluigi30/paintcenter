@@ -13,6 +13,8 @@ use Filament\Forms\Components\Select;
 use Filament\Forms\Components\TextInput;
 use Filament\Forms\Components\Textarea;
 use Filament\Forms\Components\DatePicker;
+use Filament\Forms\Components\Placeholder;
+use Illuminate\Support\HtmlString;
 use Filament\Tables\Columns\TextColumn;
 use Filament\Tables\Filters\Filter;
 use Filament\Tables\Filters\Indicator;
@@ -31,6 +33,15 @@ class OrderResource extends Resource
     public static function form(Schema $schema): Schema
     {
         return $schema->components([
+            // The counter mixes a custom colour from its hex — there is no
+            // chart code to look up — so the colour has to be on this screen,
+            // large, next to the size and the quantity. Without it the order
+            // is unfulfillable. See CUSTOM_COLOR.md.
+            Placeholder::make('mix_sheet')
+                ->label('Items to prepare')
+                ->columnSpanFull()
+                ->content(fn ($record) => static::mixSheet($record)),
+
             TextInput::make('user_id')
                 ->label('User ID')
                 ->disabled(),
@@ -81,6 +92,83 @@ class OrderResource extends Resource
                     : null)
                 ->columnSpanFull(),
         ]);
+    }
+
+    /**
+     * What the counter has to hand over, colour included.
+     *
+     * Rendered as markup rather than a disabled Repeater because the swatch
+     * is the point: a custom line has to show a large block of the actual
+     * colour beside its hex, and a form field cannot do that.
+     */
+    protected static function mixSheet(?Order $record): HtmlString
+    {
+        if (! $record?->exists) {
+            return new HtmlString('<p style="font-size:.875rem;opacity:.6">No items yet.</p>');
+        }
+
+        $record->loadMissing(['orderItems.product', 'orderItems.variant']);
+        $rows = '';
+
+        foreach ($record->orderItems as $item) {
+            $name = e($item->product?->description ?? 'Deleted product');
+            $size = e($item->size_volume ?? '—');
+            $qty  = (int) $item->quantity;
+
+            if ($item->custom_hex) {
+                $hex   = e($item->custom_hex);
+                $label = $item->custom_color_name
+                    ? e($item->custom_color_name)
+                    : 'Custom colour';
+                // '' means the paint line makes no base distinction.
+                $base     = ProductResource::BASE_SHORT[$item->variant?->base_code ?? ''] ?? '';
+                $baseText = $base !== '' ? ' &middot; ' . e($base) . ' base' : '';
+
+                // More than one can of one colour must come out of a single
+                // batch — cans mixed separately differ visibly on a wall.
+                $batch = $qty > 1
+                    ? '<div style="margin-top:.4rem;font-size:.75rem;font-weight:600;color:#b45309">'
+                        . "Mix all {$qty} cans as ONE batch</div>"
+                    : '';
+
+                $rows .= <<<HTML
+                    <div style="display:flex;gap:.85rem;align-items:center;padding:.75rem;border:1px solid rgba(128,128,128,.25);border-radius:.5rem;margin-bottom:.5rem">
+                        <div style="width:56px;height:56px;flex:none;border-radius:.375rem;background:{$hex};border:1px solid rgba(0,0,0,.2)"></div>
+                        <div style="min-width:0">
+                            <div style="font-weight:600">{$name}</div>
+                            <div style="font-size:.875rem">
+                                {$label} &middot;
+                                <span style="font-family:ui-monospace,monospace">{$hex}</span>
+                            </div>
+                            <div style="font-size:.875rem;opacity:.75">
+                                {$size} &middot; {$qty} can(s){$baseText}
+                            </div>
+                            {$batch}
+                        </div>
+                    </div>
+                HTML;
+            } else {
+                $swatch = $item->product?->hex_code
+                    ? 'background:' . e($item->product->hex_code)
+                    : 'background:repeating-linear-gradient(45deg,#ccc,#ccc 4px,#eee 4px,#eee 8px)';
+
+                $color = e(collect([$item->product?->color_code, $item->product?->color_name])
+                    ->filter()->implode(' · ')) ?: 'Ready-mixed';
+
+                $rows .= <<<HTML
+                    <div style="display:flex;gap:.85rem;align-items:center;padding:.75rem;border:1px solid rgba(128,128,128,.15);border-radius:.5rem;margin-bottom:.5rem">
+                        <div style="width:56px;height:56px;flex:none;border-radius:.375rem;{$swatch};border:1px solid rgba(0,0,0,.15)"></div>
+                        <div style="min-width:0">
+                            <div style="font-weight:600">{$name}</div>
+                            <div style="font-size:.875rem;opacity:.75">{$color}</div>
+                            <div style="font-size:.875rem;opacity:.75">{$size} &middot; {$qty} can(s)</div>
+                        </div>
+                    </div>
+                HTML;
+            }
+        }
+
+        return new HtmlString($rows ?: '<p style="font-size:.875rem;opacity:.6">No items.</p>');
     }
 
     public static function table(Table $table): Table

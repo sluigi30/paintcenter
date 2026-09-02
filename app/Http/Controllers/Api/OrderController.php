@@ -73,14 +73,22 @@ class OrderController extends Controller
                     ], 422);
                 }
 
-                $subtotal      = $variant->price * $quantity;
+                // unit_price is the ALL-IN price per can: the base plus the
+                // tint. tint_fee is carried alongside only so the breakdown
+                // can be shown — adding the two again would double-charge.
+                $tintFee       = (float) $cartItem->tint_fee;
+                $unitPrice     = $variant->price + $tintFee;
+                $subtotal      = $unitPrice * $quantity;
                 $totalAmount  += $subtotal;
 
                 $orderItems[] = [
-                    'variant'    => $variant,
-                    'quantity'   => $quantity,
-                    'unit_price' => $variant->price,
-                    'subtotal'   => $subtotal,
+                    'variant'           => $variant,
+                    'quantity'          => $quantity,
+                    'unit_price'        => $unitPrice,
+                    'subtotal'          => $subtotal,
+                    'custom_hex'        => $cartItem->custom_hex,
+                    'custom_color_name' => $cartItem->custom_color_name,
+                    'tint_fee'          => $tintFee,
                 ];
             }
 
@@ -99,6 +107,12 @@ class OrderController extends Controller
                     'product_id'         => $item['variant']->product_id,
                     'product_variant_id' => $item['variant']->id,
                     'size_volume'        => $item['variant']->size_volume,
+                    // Snapshotted like size_volume and unit_price: the variant
+                    // can later be renamed, re-priced or archived, and this
+                    // order must still show what was actually bought.
+                    'custom_hex'         => $item['custom_hex'],
+                    'custom_color_name'  => $item['custom_color_name'],
+                    'tint_fee'           => $item['tint_fee'],
                     'quantity'           => $item['quantity'],
                     'unit_price'         => $item['unit_price'],
                     'subtotal'           => $item['subtotal'],
@@ -173,8 +187,16 @@ class OrderController extends Controller
             return response()->json(['message' => 'Unauthorized.'], 403);
         }
 
-        if (! OrderCancellationService::canCancel($order)) {
-            return response()->json(['message' => 'Order cannot be cancelled.'], 422);
+        $order->loadMissing('orderItems');
+
+        // Custom orders close to cancellation a status earlier — mixing
+        // happens during `processing` and a tinted can cannot be resold.
+        if (! OrderCancellationService::canCustomerCancel($order)) {
+            return response()->json([
+                'message' => $order->has_custom_items
+                    ? 'This order is being custom mixed and can no longer be cancelled.'
+                    : 'Order cannot be cancelled.',
+            ], 422);
         }
 
         // A reason is required. The client offers Order::CUSTOMER_CANCEL_REASONS

@@ -34,13 +34,17 @@ class Product extends Model
         'color_code',   // manufacturer color code, e.g. "888"
         'color_name',   // manufacturer color name, e.g. "Red"
         'hex_code',
+        // Colour is chosen by the CUSTOMER, not stocked. Variants of such a
+        // product are cans of untinted base — see CUSTOM_COLOR.md.
+        'is_custom_color',
         'images',       // ordered gallery; first entry is the cover
         'is_archived',
     ];
 
     protected $casts = [
-        'is_archived' => 'boolean',
-        'images'      => 'array',
+        'is_archived'     => 'boolean',
+        'is_custom_color' => 'boolean',
+        'images'          => 'array',
     ];
 
     protected $appends = ['image', 'size_volume', 'price', 'stock', 'is_low_stock', 'stock_status'];

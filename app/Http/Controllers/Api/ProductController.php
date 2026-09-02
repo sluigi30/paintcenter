@@ -40,6 +40,14 @@ class ProductController extends Controller
             $query->where('category_id', $request->category_id);
         }
 
+        // Products whose colour the customer chooses. Drives the "no sage
+        // green in stock — mix your own" recovery from an empty search, which
+        // matters because a custom-colour product has no color_name for the
+        // search above to match on.
+        if ($request->boolean('tintable')) {
+            $query->where('is_custom_color', true);
+        }
+
         // Price filters match if ANY active size falls in the range
         if ($request->has('min_price')) {
             $query->whereHas('variants', fn ($q) => $q
