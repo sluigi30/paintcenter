@@ -12,11 +12,15 @@ use Illuminate\Queue\SerializesModels;
 /**
  * Send one order-related SMS on the queue.
  *
- * Order notifications go through the phone gateway, which is a network call — on
- * Laravel Cloud (relay mode) it must not block the admin's status change or the
- * customer's checkout. So the observer / controller only DISPATCH; a worker does
- * the send. Retried a few times so a phone that is briefly offline or out of
- * signal does not silently drop the message.
+ * Order notifications go through the phone gateway (a network call). Kept as a
+ * job so the send path is uniform whether it runs inline (QUEUE_CONNECTION=sync,
+ * the current setup) or later on a background worker.
+ *
+ * It never throws. SmsService already records the outcome in sms_logs, and a
+ * failed send must NOT break the request that triggered it — with `sync` that
+ * request is the admin's "save status" click, or a customer's checkout. A
+ * dropped order text is non-critical: the in-app message thread and order
+ * polling also keep the customer informed.
  *
  * OTP is deliberately NOT routed through here — that send stays synchronous so
  * the user gets immediate "sent / failed" feedback while they wait for the code.
@@ -24,9 +28,6 @@ use Illuminate\Queue\SerializesModels;
 class SendOrderSms implements ShouldQueue
 {
     use Dispatchable, InteractsWithQueue, Queueable, SerializesModels;
-
-    public int $tries = 3;
-    public array $backoff = [10, 30, 60]; // seconds between attempts
 
     public function __construct(
         public ?int $orderId,
@@ -36,10 +37,6 @@ class SendOrderSms implements ShouldQueue
 
     public function handle(SmsService $sms): void
     {
-        // SmsService logs the outcome to sms_logs and returns false on failure;
-        // throw so the queue retries rather than swallowing a dropped message.
-        if (! $sms->send($this->orderId, $this->phone, $this->message)) {
-            throw new \RuntimeException("SMS send failed for order {$this->orderId}");
-        }
+        $sms->send($this->orderId, $this->phone, $this->message);
     }
 }
