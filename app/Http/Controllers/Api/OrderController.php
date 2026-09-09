@@ -11,6 +11,7 @@ use App\Models\Payment;
 use App\Models\ProductVariant;
 use App\Services\OrderCancellationService;
 use App\Services\OrderMessageService;
+use App\Jobs\SendOrderSms;
 use App\Services\SmsService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -148,17 +149,19 @@ class OrderController extends Controller
             // messaged are otherwise unreachable from the admin inbox.
             OrderMessageService::orderPlaced($order);
 
-            $smsService = new SmsService();
             $phone = $request->user()->phone;
 
             if ($phone) {
+                // Identify the order by the date it was placed, never its id —
+                // ids are a shared auto-increment (see constants/orders.js).
                 $smsMessage = SmsService::orderPlacedMessage(
                     $request->user()->first_name,
-                    $order->id,
+                    ($order->order_date ?? $order->created_at)?->format('j M Y') ?? 'today',
                     $totalAmount
                 );
 
-                $smsService->send($order->id, $phone, $smsMessage);
+                // Queued so checkout does not block on the phone/relay.
+                SendOrderSms::dispatch($order->id, $phone, $smsMessage);
             }
             return response()->json([
                 'message' => 'Order placed successfully.',

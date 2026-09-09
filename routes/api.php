@@ -12,6 +12,11 @@ use Illuminate\Support\Facades\Route;
 Route::prefix('auth')->group(function () {
     Route::post('/register', [AuthController::class, 'register']);
     Route::post('/login',    [AuthController::class, 'login']);
+
+    // Phone verification, ahead of registration. send-otp is throttled per
+    // phone (the 'otp-send' limiter); verify-otp is capped to blunt guessing.
+    Route::post('/send-otp',   [AuthController::class, 'sendOtp'])->middleware('throttle:otp-send');
+    Route::post('/verify-otp', [AuthController::class, 'verifyOtp'])->middleware('throttle:10,1');
 });
 
 // Public product routes
