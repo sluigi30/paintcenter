@@ -43,7 +43,8 @@ class BrandResource extends Resource
             ->columns([
                 ImageColumn::make('image')
                     ->label('Logo')
-                    ->circular(),
+                    ->circular()
+                    ->disk('public'),
                 TextColumn::make('brand_name')
                     ->label('Brand Name')
                     ->searchable()

@@ -56,10 +56,6 @@ return [
             'url' => env('AWS_URL'),
             'endpoint' => env('AWS_ENDPOINT'),
             'use_path_style_endpoint' => env('AWS_USE_PATH_STYLE_ENDPOINT', false),
-            // No per-object 'visibility' => Cloudflare R2 (Laravel Cloud storage)
-            // has no per-object ACLs; public access is granted at the BUCKET level
-            // (the bucket is set Public), and images are served via AWS_URL. Adding
-            // visibility here makes the adapter send ACL ops R2 rejects.
             'throw' => false,
             'report' => false,
         ],

@@ -78,6 +78,7 @@ class InventoryResource extends Resource
                 \Filament\Tables\Columns\ImageColumn::make('product.image')
                     ->label('')
                     ->circular()
+                    ->disk('public')
                     // Colour lives on the variant now, so the placeholder is
                     // the shade of THIS can rather than of the whole line.
                     ->defaultImageUrl(fn ($record) =>
