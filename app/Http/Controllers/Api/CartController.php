@@ -29,7 +29,7 @@ class CartController extends Controller
                     'cart_item_id'       => $item->id,
                     'product_id'         => $item->product_id,
                     'product_variant_id' => $item->product_variant_id,
-                    'name'               => $item->product->description,
+                    'name'               => $item->product->name,
                     'size_volume'        => $item->variant->size_volume,
                     'price'              => $unitPrice,
                     'base_price'         => $basePrice,
@@ -41,8 +41,12 @@ class CartController extends Controller
                     // a ready-mixed one uses, so every swatch already in the
                     // app renders it with no change. is_custom is what drives
                     // the badge and Buy Again.
-                    'hex_code'           => $isCustom ? $item->custom_hex : $item->product->hex_code,
-                    'color_name'         => $isCustom ? $item->custom_color_name : $item->product->color_name,
+                    'hex_code'           => $isCustom ? $item->custom_hex : $item->variant->hex_code,
+                    'color_name'         => $isCustom ? $item->custom_color_name : ($item->variant->color_name ?: null),
+                    'color_code'         => $isCustom ? null : ($item->variant->color_code ?: null),
+                    'color_label'        => $isCustom
+                        ? ($item->custom_color_name ?: 'Custom colour')
+                        : ($item->variant->color_label ?: null),
                     'is_custom'          => $isCustom,
                     'custom_hex'         => $item->custom_hex,
                     'custom_color_name'  => $item->custom_color_name,

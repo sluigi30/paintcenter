@@ -2,6 +2,7 @@
 
 namespace App\Filament\Widgets;
 
+use App\Filament\Resources\InventoryResource;
 use App\Models\ProductVariant;
 use Filament\Actions\Action;
 use Filament\Tables\Columns\TextColumn;
@@ -28,10 +29,13 @@ class LowStockWidget extends BaseWidget
     public function table(Table $table): Table
     {
         return $table
+            // Table widgets do not inherit the stats widget's polling, so this
+            // sat frozen while customers bought the very stock it lists.
+            ->poll('30s')
             ->query(
                 ProductVariant::query()
                     ->lowStock()
-                    ->with(['product.brand', 'product.category'])
+                    ->with(['product.brand', 'product.categories'])
                     ->orderByRaw('stock ASC')             // worst stock levels first
             )
             ->columns([
@@ -40,11 +44,20 @@ class LowStockWidget extends BaseWidget
                     ->sortable()
                     ->searchable(),
 
-                TextColumn::make('product.description')
+                TextColumn::make('product.name')
                     ->label('Product')
                     ->limit(45)
-                    ->tooltip(fn ($record) => $record->product?->description)
+                    ->tooltip(fn ($record) => $record->product?->name)
                     ->searchable(),
+
+                // Two low rows of the same product and size are different
+                // shades — without this they read as a duplicate.
+                TextColumn::make('color_label')
+                    ->label('Color')
+                    ->badge()
+                    ->color('gray')
+                    ->state(fn ($record) => $record->color_label ?: null)
+                    ->placeholder('-'),
 
                 TextColumn::make('size_volume')
                     ->label('Size')
@@ -77,55 +90,30 @@ class LowStockWidget extends BaseWidget
                         default        => 'success',
                     }),
 
-                TextColumn::make('product.category.category_name')
+                TextColumn::make('product.categories.category_name')
                     ->label('Category')
+                    ->badge()
                     ->color('gray')
                     ->toggleable(isToggledHiddenByDefault: true),
             ])
 
             ->actions([
-                // Quick restock shortcut directly from the dashboard
-                Action::make('quick_restock')
-                    ->label('Restock')
-                    ->icon('heroicon-o-plus-circle')
-                    ->color('success')
-                    ->modalHeading(fn ($record) => 'Quick Restock — ' . $record->display_name)
-                    ->modalDescription(fn ($record) => 'Current stock: ' . $record->stock . ' units')
-                    ->modalWidth('sm')
-                    ->form([
-                        \Filament\Forms\Components\TextInput::make('quantity')
-                            ->label('Quantity to Add')
-                            ->numeric()
-                            ->minValue(1)
-                            ->required()
-                            ->placeholder('e.g. 50'),
-
-                        \Filament\Forms\Components\Textarea::make('notes')
-                            ->label('Reason (optional)')
-                            ->placeholder('e.g. Supplier delivery Jan batch')
-                            ->rows(2),
-                    ])
-                    ->action(function (ProductVariant $record, array $data) {
-                        \App\Models\InventoryLog::record(
-                            $record,
-                            'restock',
-                            (int) $data['quantity'],
-                            $data['notes'] ?? ''
-                        );
-
-                        \Filament\Notifications\Notification::make()
-                            ->title('Restocked Successfully')
-                            ->body("Added {$data['quantity']} units. New stock: {$record->fresh()->stock}")
-                            ->success()
-                            ->send();
-                    }),
-
-                // Jump to full inventory page for that item
+                // Jump to Inventory with the product already searched, so the
+                // admin lands on its rows instead of the full list with the
+                // item they just clicked to find nowhere in sight. `search` is
+                // Filament's URL alias for tableSearch — the same handoff the
+                // stock-alert notifications use.
+                //
+                // By product name, not the exact can: `size_volume` is not a
+                // searchable column, so adding the size would AND in a term
+                // that matches nothing and return an empty table.
                 Action::make('manage')
                     ->label('Manage')
                     ->icon('heroicon-o-arrow-top-right-on-square')
                     ->color('gray')
-                    ->url(fn ($record) => route('filament.admin.resources.inventories.index'))
+                    ->url(fn (ProductVariant $record) => InventoryResource::getUrl('index', [
+                        'search' => $record->product?->name,
+                    ]))
                     ->openUrlInNewTab(false),
             ])
 

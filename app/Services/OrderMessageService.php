@@ -128,10 +128,14 @@ class OrderMessageService
 
         return $order->orderItems
             ->map(function ($item) {
-                $name = $item->product?->description ?? 'Item';
-                $size = $item->size_volume ? " ({$item->size_volume})" : '';
+                $name  = $item->product?->name ?: 'Item';
+                // The shade is half of what was ordered now that one product
+                // carries several — "2x BOYSEN Latex Colors (4L)" would not
+                // tell the customer which can is coming.
+                $color = $item->color_label !== '' ? ", {$item->color_label}" : '';
+                $size  = $item->size_volume ? " ({$item->size_volume})" : '';
 
-                return "• {$item->quantity}x {$name}{$size}";
+                return "• {$item->quantity}x {$name}{$color}{$size}";
             })
             ->all();
     }

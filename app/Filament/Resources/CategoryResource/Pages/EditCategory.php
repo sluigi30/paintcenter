@@ -2,12 +2,15 @@
 
 namespace App\Filament\Resources\CategoryResource\Pages;
 
+use App\Filament\Concerns\ReturnsToTableAfterSave;
 use App\Filament\Resources\CategoryResource;
 use Filament\Actions\Action;
 use Filament\Resources\Pages\EditRecord;
 
 class EditCategory extends EditRecord
 {
+    use ReturnsToTableAfterSave;
+
     protected static string $resource = CategoryResource::class;
 
     protected function getHeaderActions(): array

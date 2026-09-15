@@ -53,17 +53,22 @@ class CustomColorCartTest extends TestCase
     {
         $product = Product::create([
             'brand_id'        => Brand::create(['brand_name' => 'Testbrand'])->id,
-            'category_id'     => Category::create(['category_name' => 'Latex'])->id,
-            'description'     => $custom ? 'Testbrand Latex — Custom Colour' : 'Testbrand Latex, Red',
-            'hex_code'        => $custom ? null : '#B01B1B',
+            'name'            => $custom ? 'Testbrand Latex — Custom Colour' : 'Testbrand Latex',
             'is_custom_color' => $custom,
         ]);
 
+        $product->categories()->attach(Category::create(['category_name' => 'Latex'])->id);
+
         foreach ($variants as $v) {
+            // Colour lives on the variant now. A custom-colour line leaves it
+            // empty — the customer's choice arrives on the cart line instead.
             $product->variants()->create($v + [
-                'price'    => 1200,
-                'tint_fee' => 0,
-                'stock'    => 10,
+                'color_code' => $custom ? '' : 'R-01',
+                'color_name' => $custom ? '' : 'Red',
+                'hex_code'   => $custom ? null : '#B01B1B',
+                'price'      => 1200,
+                'tint_fee'   => 0,
+                'stock'      => 10,
             ]);
         }
 
@@ -280,7 +285,7 @@ class CustomColorCartTest extends TestCase
         $this->actingAs($this->customer, 'sanctum')
             ->postJson('/api/orders', [
                 'order_type'     => 'pickup',
-                'payment_method' => 'cash',
+                'payment_method' => 'gcash',
             ])->assertStatus(201);
 
         $line = OrderItem::firstOrFail();
@@ -324,7 +329,7 @@ class CustomColorCartTest extends TestCase
         $this->actingAs($this->customer, 'sanctum')
             ->postJson('/api/orders', [
                 'order_type'     => 'pickup',
-                'payment_method' => 'cash',
+                'payment_method' => 'gcash',
             ])->assertStatus(201);
 
         return Order::latest('id')->firstOrFail();

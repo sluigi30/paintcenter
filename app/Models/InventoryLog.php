@@ -22,6 +22,49 @@ class InventoryLog extends Model
         'quantity_changed' => 'integer',
     ];
 
+    /**
+     * Preset reasons offered on Adjust Stock, keyed by the action being taken.
+     *
+     * Free text produced a log nobody could read back: "damaged", "Damage",
+     * "dmg 2 cans" and "" are four spellings of one thing, so the history
+     * answered "what happened to this can" only if you already knew. Presets
+     * per action keep the common cases uniform — a supplier delivery is not a
+     * reason to deduct, and spoilage is not a reason to restock.
+     *
+     * NOT a constraint: the stored value is a plain string, and "Other" still
+     * takes whatever the admin types. Same arrangement as the cancellation
+     * reasons in Order::ADMIN_CANCEL_REASONS. Editing these lists never
+     * invalidates a log that was already written.
+     */
+    public const REASONS = [
+        'restock' => [
+            'Supplier delivery',
+            'Stock transfer in',
+            'Customer return restocked',
+            'Found during stock count',
+        ],
+        'deduct' => [
+            'Damaged',
+            'Expired or unusable',
+            'Used as sample or demo',
+            'Stock transfer out',
+            'Lost or stolen',
+        ],
+        'adjustment' => [
+            'Stock count correction',
+            'Data entry error',
+            'Previous log corrected',
+        ],
+    ];
+
+    /** Preset list for one action, plus the always-present free-text escape. */
+    public static function reasonOptions(?string $action): array
+    {
+        $presets = self::REASONS[$action] ?? [];
+
+        return array_combine($presets, $presets) + ['other' => 'Other (type below)'];
+    }
+
     // -------------------------------------------------------
     // Relationships
     // -------------------------------------------------------

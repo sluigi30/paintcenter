@@ -21,8 +21,9 @@ class Category extends Model
         'is_archived',
     ];
 
+    /** A product can sit under several headings — see the category_product pivot. */
     public function products()
     {
-        return $this->hasMany(Product::class);
+        return $this->belongsToMany(Product::class);
     }
 }

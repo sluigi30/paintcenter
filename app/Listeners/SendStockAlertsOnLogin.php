@@ -74,7 +74,7 @@ class SendStockAlertsOnLogin
                     // audit trail (InventoryLog::record).
                     ->url(InventoryResource::getUrl('index', [
                         'filters' => ['stock_status' => ['value' => 'attention']],
-                    ]))
+                    ], isAbsolute: false))
                     ->markAsRead()
                     ->close(),
             ]);

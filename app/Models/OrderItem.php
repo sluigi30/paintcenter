@@ -13,6 +13,9 @@ class OrderItem extends Model
         'order_id',
         'product_id',
         'product_variant_id',
+        'color_code',         // snapshot of the ordered colour — the variant
+        'color_name',         //   can be recoloured or archived later and the
+        'hex_code',           //   order must still show what was handed over
         'size_volume',        // snapshot of the ordered size, like unit_price
         'custom_hex',         // snapshot: set => custom-tinted colour
         'custom_color_name',  // snapshot: the customer's own label
@@ -33,11 +36,31 @@ class OrderItem extends Model
      * Buy Again. CartItem has the same accessor but does not append it —
      * CartController composes that payload by hand.
      */
-    protected $appends = ['is_custom'];
+    protected $appends = ['is_custom', 'color_label', 'display_color'];
 
     public function getIsCustomAttribute(): bool
     {
         return $this->custom_hex !== null;
+    }
+
+    /** "Burnt Sienna (B-1408)" for a ready-mixed line, the customer's label for a custom one. */
+    public function getColorLabelAttribute(): string
+    {
+        if ($this->is_custom) {
+            return $this->custom_color_name ?: 'Custom colour';
+        }
+
+        if ($this->color_name && $this->color_code) {
+            return "{$this->color_name} ({$this->color_code})";
+        }
+
+        return (string) ($this->color_name ?: $this->color_code ?: '');
+    }
+
+    /** The swatch hex, whichever kind of line this is. Null when there is no colour. */
+    public function getDisplayColorAttribute(): ?string
+    {
+        return $this->is_custom ? $this->custom_hex : $this->hex_code;
     }
 
     public function order()

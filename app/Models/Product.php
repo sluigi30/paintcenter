@@ -5,12 +5,15 @@ namespace App\Models;
 use App\Models\Concerns\TracksActivity;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Support\Collection;
 
 /**
- * Product identity (name, brand, category, color, image).
- * Purchasable sizes live in ProductVariant — price, stock, and
- * thresholds are per variant. The stock/price/size_volume attributes
- * on this model are computed aggregates kept for API convenience.
+ * Product identity (name, brand, categories, images).
+ *
+ * Everything a customer CHOOSES lives in ProductVariant — colour, size and
+ * base, each combination with its own price and stock. The colour/size/price/
+ * stock attributes on this model are computed aggregates kept for API
+ * convenience; nothing writes to them.
  */
 class Product extends Model
 {
@@ -18,7 +21,7 @@ class Product extends Model
 
     public function activityTitle(): string
     {
-        return $this->description ?? 'Product #' . $this->getKey();
+        return $this->name ?: 'Product #'.$this->getKey();
     }
 
     /** The images gallery is bulky JSON — record that it changed, not the blob. */
@@ -28,12 +31,9 @@ class Product extends Model
     }
 
     protected $fillable = [
-        'category_id',
         'brand_id',
+        'name',         // the product line, e.g. "BOYSEN Latex Colors"
         'description',
-        'color_code',   // manufacturer color code, e.g. "888"
-        'color_name',   // manufacturer color name, e.g. "Red"
-        'hex_code',
         // Colour is chosen by the CUSTOMER, not stocked. Variants of such a
         // product are cans of untinted base — see CUSTOM_COLOR.md.
         'is_custom_color',
@@ -42,20 +42,25 @@ class Product extends Model
     ];
 
     protected $casts = [
-        'is_archived'     => 'boolean',
+        'is_archived' => 'boolean',
         'is_custom_color' => 'boolean',
-        'images'          => 'array',
+        'images' => 'array',
     ];
 
-    protected $appends = ['image', 'size_volume', 'price', 'stock', 'is_low_stock', 'stock_status'];
+    protected $appends = ['image', 'colors', 'size_volume', 'price', 'stock', 'is_low_stock', 'stock_status'];
 
     // -------------------------------------------------------
     // Relationships
     // -------------------------------------------------------
 
-    public function category()
+    /**
+     * A paint is often shelved under more than one heading — an enamel that
+     * is also a wood coating belongs in both, or customers browsing either
+     * one never find it.
+     */
+    public function categories()
     {
-        return $this->belongsTo(Category::class);
+        return $this->belongsToMany(Category::class);
     }
 
     public function brand()
@@ -63,14 +68,20 @@ class Product extends Model
         return $this->belongsTo(Brand::class);
     }
 
+    /**
+     * Ordered EXPLICITLY. The identity unique index is leftmost-prefixed on
+     * product_id, so an unordered query gets answered from it and comes back
+     * sorted by colour code — which put every uncoded shade first. What the
+     * admin dragged into place is the order customers should see.
+     */
     public function variants()
     {
-        return $this->hasMany(ProductVariant::class);
+        return $this->hasMany(ProductVariant::class)->orderBy('sort_order')->orderBy('id');
     }
 
     public function activeVariants()
     {
-        return $this->hasMany(ProductVariant::class)->where('is_archived', false);
+        return $this->variants()->where('is_archived', false);
     }
 
     public function orderItems()
@@ -102,11 +113,6 @@ class Product extends Model
         return $normalized === '' ? null : $normalized;
     }
 
-    public function setColorCodeAttribute(?string $value): void
-    {
-        $this->attributes['color_code'] = self::normalizeColorCode($value);
-    }
-
     // -------------------------------------------------------
     // Accessors
     // -------------------------------------------------------
@@ -117,14 +123,70 @@ class Product extends Model
         return $this->images[0] ?? null;
     }
 
+    /**
+     * The distinct colours this product is stocked in, in the order the
+     * admin arranged the variants.
+     *
+     * A colour is identified by the PAIR (code, name) — plenty of shades have
+     * a name and no manufacturer code, so keying on the code alone would fold
+     * "White" and "Off-White" into one chip. `hex_code` is a screen preview
+     * taken from the first variant of the colour; it identifies nothing.
+     *
+     * Empty for an uncoded product (thinners, tools) and for a custom-colour
+     * one, where the colour is the customer's to choose.
+     */
+    public function getColorsAttribute(): array
+    {
+        return $this->availableVariants()
+            ->filter(fn ($v) => $v->has_color)
+            ->groupBy(fn ($v) => $v->color_key)
+            ->map(function ($variants, $key) {
+                $first = $variants->first();
+                $stock = (int) $variants->sum('stock');
+
+                return [
+                    'key' => $key,
+                    'color_code' => $first->color_code,
+                    'color_name' => $first->color_name,
+                    'hex_code' => $variants->firstWhere('hex_code', '!=', null)?->hex_code,
+                    'label' => $first->color_label,
+                    'stock' => $stock,
+                    'stock_status' => $stock === 0
+                        ? 'out_of_stock'
+                        : ($variants->contains(fn ($v) => $v->is_low_stock) ? 'low_stock' : 'in_stock'),
+                ];
+            })
+            ->values()
+            ->all();
+    }
+
     // -------------------------------------------------------
     // Aggregate accessors (computed from variants)
     // -------------------------------------------------------
 
-    /** Comma list of active sizes, e.g. "1L, 4L, 16L". */
+    /**
+     * Comma list of the DISTINCT active sizes, e.g. "1L, 4L, 16L".
+     *
+     * One size is one size however many shades it is stocked in. Plucking per
+     * variant repeated the whole list once per colour, so a line sold in six
+     * shades read "1L, 4L, 1L, 4L, ..." on the catalogue card. Matching is
+     * case- and space-insensitive ("4L" and "4 l" are the same can) but the
+     * first spelling is what prints. Order follows `sort_order`, so the admin
+     * still controls it.
+     */
     public function getSizeVolumeAttribute(): string
     {
-        return $this->availableVariants()->pluck('size_volume')->implode(', ');
+        return $this->distinctSizes()->implode(', ');
+    }
+
+    /** The distinct active sizes, first spelling wins, in variant order. */
+    public function distinctSizes(): Collection
+    {
+        return $this->availableVariants()
+            ->pluck('size_volume')
+            ->filter(fn ($size) => trim((string) $size) !== '')
+            ->unique(fn ($size) => mb_strtolower(preg_replace('/\s+/', '', $size)))
+            ->values();
     }
 
     /** Lowest active-variant price — a "from ₱…" display price. */

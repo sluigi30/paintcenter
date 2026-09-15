@@ -116,9 +116,12 @@ class ProductVariantObserver
             Action::make('restock')
                 ->label('Restock')
                 ->button()
+                // Relative: this fires on stock deductions made by customer
+                // checkouts, so an absolute URL would carry the mobile app's
+                // host into the admin's browser.
                 ->url(InventoryResource::getUrl('index', [
-                    'search' => $variant->product?->description,
-                ]))
+                    'search' => $variant->product?->name,
+                ], isAbsolute: false))
                 ->markAsRead(),
         ];
     }

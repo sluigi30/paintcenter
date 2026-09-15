@@ -40,20 +40,19 @@ class CustomColorDemoSeeder extends Seeder
 
         $product = Product::updateOrCreate(
             [
-                'brand_id'    => $brand->id,
-                'description' => 'Permacoat Latex — Custom Colour',
+                'brand_id' => $brand->id,
+                'name'     => 'Permacoat Latex — Custom Colour',
             ],
             [
-                'category_id'     => $category->id,
-                'is_custom_color' => true,
                 // A custom-colour product has no colour of its own; every
-                // order carries the one the customer chose.
-                'hex_code'        => null,
-                'color_code'      => null,
-                'color_name'      => null,
+                // order carries the one the customer chose, so its variants
+                // leave color_code / color_name empty.
+                'is_custom_color' => true,
                 'is_archived'     => false,
             ]
         );
+
+        $product->categories()->syncWithoutDetaching([$category->id]);
 
         // [size, base, price, tint fee, stock]
         $variants = [
@@ -83,7 +82,7 @@ class CustomColorDemoSeeder extends Seeder
             );
         }
 
-        $this->command?->info("Seeded product #{$product->id}: {$product->description}");
+        $this->command?->info("Seeded product #{$product->id}: {$product->name}");
         $this->command?->info('  ' . $product->variants()->count() . ' variants (3 sizes x 3 bases)');
         $this->command?->info('  Try: pale sage #C8D5C0 -> pastel, deep burgundy #7A1F2B -> deep');
     }

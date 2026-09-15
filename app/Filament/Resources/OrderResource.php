@@ -29,7 +29,29 @@ class OrderResource extends Resource
     protected static string|\BackedEnum|null $navigationIcon = 'heroicon-o-clipboard-document-list';
     protected static string|\UnitEnum|null $navigationGroup = 'Operations';
     protected static ?int $navigationSort = 1;
-    
+
+    /**
+     * Orders waiting to be picked up by staff. Badges are rendered with the
+     * sidebar, so this refreshes on navigation, not on a timer — the bell is
+     * what announces an order live (see AdminOrderAlertService).
+     */
+    public static function getNavigationBadge(): ?string
+    {
+        $count = static::getModel()::where('status', 'pending')->count();
+
+        return $count > 0 ? (string) $count : null;
+    }
+
+    public static function getNavigationBadgeColor(): ?string
+    {
+        return 'warning';
+    }
+
+    public static function getNavigationBadgeTooltip(): ?string
+    {
+        return 'Orders waiting to be processed';
+    }
+
     public static function form(Schema $schema): Schema
     {
         return $schema->components([
@@ -46,24 +68,14 @@ class OrderResource extends Resource
                 ->label('User ID')
                 ->disabled(),
 
-            // 'cancelled' is deliberately absent — cancelling goes through the
-            // Cancel action so a reason is always captured and stock is always
-            // restored. An already-cancelled order keeps showing its status.
-            Select::make('status')
-                ->options(fn ($record) => $record?->status === 'cancelled'
-                    ? ['cancelled' => 'Cancelled']
-                    : [
-                        'pending'          => 'Pending',
-                        'processing'       => 'Processing',
-                        'shipped'          => 'Shipped',
-                        'ready_for_pickup' => 'Ready for Pickup',
-                        'completed'        => 'Completed',
-                    ])
-                ->disabled(fn ($record) => $record?->status === 'cancelled')
-                ->helperText(fn ($record) => $record?->status === 'cancelled'
-                    ? null
-                    : 'To cancel this order, use the Cancel Order action — it records a reason and returns stock.')
-                ->required(),
+            // Status is no longer a field to set. A dropdown of every status let
+            // a delivery be marked ready_for_pickup, which the customer's
+            // tracker cannot place — it showed the order as untouched. It moves
+            // one step at a time now, through the row actions, along
+            // Order::STATUS_FLOW_BY_TYPE.
+            Placeholder::make('status_display')
+                ->label('Status')
+                ->content(fn (?Order $record) => $record ? static::statusSummary($record) : '—'),
 
             Select::make('order_type')
                 ->options([
@@ -111,7 +123,7 @@ class OrderResource extends Resource
         $rows = '';
 
         foreach ($record->orderItems as $item) {
-            $name = e($item->product?->description ?? 'Deleted product');
+            $name = e($item->product?->name ?: 'Deleted product');
             $size = e($item->size_volume ?? '—');
             $qty  = (int) $item->quantity;
 
@@ -148,12 +160,15 @@ class OrderResource extends Resource
                     </div>
                 HTML;
             } else {
-                $swatch = $item->product?->hex_code
-                    ? 'background:' . e($item->product->hex_code)
+                // Read off the LINE, not the variant: colour is snapshotted
+                // at checkout for the same reason size and price are, and a
+                // recoloured or archived variant must not rewrite an order
+                // the counter has already picked.
+                $swatch = $item->hex_code
+                    ? 'background:' . e($item->hex_code)
                     : 'background:repeating-linear-gradient(45deg,#ccc,#ccc 4px,#eee 4px,#eee 8px)';
 
-                $color = e(collect([$item->product?->color_code, $item->product?->color_name])
-                    ->filter()->implode(' · ')) ?: 'Ready-mixed';
+                $color = e($item->color_label) ?: 'Ready-mixed';
 
                 $rows .= <<<HTML
                     <div style="display:flex;gap:.85rem;align-items:center;padding:.75rem;border:1px solid rgba(128,128,128,.15);border-radius:.5rem;margin-bottom:.5rem">
@@ -174,6 +189,10 @@ class OrderResource extends Resource
     public static function table(Table $table): Table
     {
         return $table
+            // An order can arrive at any moment and this is the screen staff
+            // leave open. Without a poll the list is only as fresh as the last
+            // reload. 30s matches the notification bell's own interval.
+            ->poll('30s')
             ->columns([
                 TextColumn::make('id')
                     ->label('Order #')
@@ -277,6 +296,9 @@ class OrderResource extends Resource
            ->actions([
                 \Filament\Actions\EditAction::make(),
 
+                static::advanceStatusAction(),
+                static::revertStatusAction(),
+
                 Action::make('cancelOrder')
                     ->label('Cancel')
                     ->icon('heroicon-o-x-circle')
@@ -317,6 +339,109 @@ class OrderResource extends Resource
                     }),
             ])
             ->defaultSort('created_at', 'desc');
+    }
+
+    /**
+     * Move the order one step along its own flow.
+     *
+     * One button rather than a dropdown: the work is linear, so the only
+     * question is whether the next thing has happened yet. It names the step it
+     * performs ("Out for Delivery"), because the admin is recording something
+     * that happened rather than setting a field.
+     */
+    public static function advanceStatusAction(): Action
+    {
+        return Action::make('advanceStatus')
+            ->label(fn (Order $record) => Order::STATUS_ADVANCE_LABELS[$record->nextStatus()] ?? 'Advance')
+            ->icon('heroicon-o-arrow-right-circle')
+            ->color('primary')
+            ->visible(fn (Order $record) => $record->nextStatus() !== null)
+            ->requiresConfirmation()
+            ->modalHeading(fn (Order $record) => 'Move to ' . Order::statusLabel($record->nextStatus()) . '?')
+            ->modalDescription('The customer is messaged as soon as this is saved.')
+            ->action(function (Order $record) {
+                $next = $record->nextStatus();
+
+                // Re-read rather than trusting the rendered button: the table
+                // polls every 30s and two admins can be looking at the same
+                // row. If someone moved it already, say so instead of pushing
+                // it a second step along.
+                if ($next === null || $record->fresh()->status !== $record->status) {
+                    Notification::make()
+                        ->title('Order already moved')
+                        ->body('Someone else advanced this order. Refresh to see where it is.')
+                        ->warning()
+                        ->send();
+
+                    return;
+                }
+
+                // OrderObserver announces the change to the customer.
+                $record->update(['status' => $next]);
+
+                Notification::make()
+                    ->title('Order is now ' . Order::statusLabel($next))
+                    ->body('The customer has been told.')
+                    ->success()
+                    ->send();
+            });
+    }
+
+    /**
+     * Undo a press that went one step too far.
+     *
+     * Deliberately one step back and no further, so correcting a slip cannot
+     * turn into rewriting an order's history. The customer is messaged again —
+     * they were already told the wrong thing, and silence would leave them
+     * with it.
+     */
+    public static function revertStatusAction(): Action
+    {
+        return Action::make('revertStatus')
+            ->label('Move Back')
+            ->icon('heroicon-o-arrow-uturn-left')
+            ->color('gray')
+            ->visible(fn (Order $record) => $record->previousStatus() !== null)
+            ->requiresConfirmation()
+            ->modalHeading(fn (Order $record) => 'Move back to ' . Order::statusLabel($record->previousStatus()) . '?')
+            ->modalDescription('For correcting a step taken by mistake. The customer is messaged about the change.')
+            ->action(function (Order $record) {
+                $previous = $record->previousStatus();
+
+                if ($previous === null || $record->fresh()->status !== $record->status) {
+                    Notification::make()
+                        ->title('Order already moved')
+                        ->body('Someone else changed this order. Refresh to see where it is.')
+                        ->warning()
+                        ->send();
+
+                    return;
+                }
+
+                $record->update(['status' => $previous]);
+
+                Notification::make()
+                    ->title('Moved back to ' . Order::statusLabel($previous))
+                    ->success()
+                    ->send();
+            });
+    }
+
+    /** Where the order is, and what it is waiting for, on the edit page. */
+    protected static function statusSummary(Order $record): HtmlString
+    {
+        $now  = e(Order::statusLabel($record->status));
+        $next = $record->nextStatus();
+
+        if ($record->status === 'cancelled') {
+            return new HtmlString("<strong>{$now}</strong>");
+        }
+
+        $hint = $next
+            ? 'Next: ' . e(Order::statusLabel($next))
+            : 'This order has reached the end of its flow.';
+
+        return new HtmlString("<strong>{$now}</strong><br><span style=\"opacity:.7\">{$hint}</span>");
     }
 
     public static function getPages(): array

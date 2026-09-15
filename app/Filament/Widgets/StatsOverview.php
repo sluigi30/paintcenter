@@ -13,6 +13,14 @@ class StatsOverview extends BaseWidget
 {
     protected static ?int $sort = 1;
 
+    /**
+     * Filament's StatsOverviewWidget polls every 5s by inheritance, and
+     * getStats() below is ten aggregates — seven of them daily revenue sums.
+     * That is a lot of MySQL per open tab for numbers that move a few times an
+     * hour. 30s matches the notification bell and the orders table.
+     */
+    protected ?string $pollingInterval = '30s';
+
     protected function getStats(): array
     {
         // Stock is tracked per variant (size) — count sizes, not products

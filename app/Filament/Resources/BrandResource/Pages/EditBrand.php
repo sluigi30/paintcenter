@@ -2,6 +2,7 @@
 
 namespace App\Filament\Resources\BrandResource\Pages;
 
+use App\Filament\Concerns\ReturnsToTableAfterSave;
 use App\Filament\Resources\BrandResource;
 use App\Models\Brand;
 use Filament\Actions\Action;
@@ -9,6 +10,8 @@ use Filament\Resources\Pages\EditRecord;
 
 class EditBrand extends EditRecord
 {
+    use ReturnsToTableAfterSave;
+
     protected static string $resource = BrandResource::class;
 
     protected function getHeaderActions(): array

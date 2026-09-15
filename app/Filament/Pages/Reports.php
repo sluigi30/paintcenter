@@ -200,32 +200,49 @@ class Reports extends Page
             ])->toArray();
 
         // ── Top Products ───────────────────────────────────
-        $this->topProducts = OrderItem::with(['product.brand'])
+        $this->topProducts = OrderItem::with(['product.brand', 'product.variants'])
             ->whereHas('order', fn ($q) => $q
                 ->whereBetween('created_at', [$from, $to])
                 ->where('status', '!=', 'cancelled'))
             ->selectRaw('product_id, SUM(quantity) as total_qty, SUM(subtotal) as total_revenue')
             ->groupBy('product_id')->orderByDesc('total_revenue')->limit(8)->get()
             ->map(fn ($item) => [
-                'name'          => \Str::limit($item->product?->description ?? 'Unknown', 45),
+                'name'          => \Str::limit($item->product?->name ?: 'Unknown', 45),
                 'brand'         => $item->product?->brand?->brand_name ?? '—',
-                'hex_code'      => $item->product?->hex_code ?? 'CCCCCC',
+                // Rows are grouped by product, and a product now spans several
+                // shades — so this swatch is decorative: the first colour of
+                // the line, not the one that sold.
+                'hex_code'      => ltrim($item->product?->colors[0]['hex_code'] ?? 'CCCCCC', '#'),
                 'total_qty'     => (int) $item->total_qty,
                 'total_revenue' => (float) $item->total_revenue,
             ])->toArray();
 
         // ── Top Categories ─────────────────────────────────
-        $this->topCategories = OrderItem::with(['product.category'])
+        $this->topCategories = OrderItem::with(['product.categories'])
             ->whereHas('order', fn ($q) => $q
                 ->whereBetween('created_at', [$from, $to])
                 ->where('status', '!=', 'cancelled'))
             ->selectRaw('product_id, SUM(subtotal) as total_revenue, SUM(quantity) as total_qty')
             ->groupBy('product_id')->get()
-            ->groupBy(fn ($item) => $item->product?->category?->category_name ?? 'Uncategorized')
-            ->map(fn ($items, $cat) => [
+            // A product can sit in several categories now, so its revenue is
+            // counted under EACH one it belongs to. These totals therefore
+            // overlap and do not add up to the period's revenue: the ranking
+            // answers "how much business touched this category", not "how was
+            // revenue split".
+            ->flatMap(function ($item) {
+                $categories = $item->product?->categories->pluck('category_name')->all();
+
+                return collect($categories ?: ['Uncategorized'])->map(fn ($name) => [
+                    'category'      => $name,
+                    'total_revenue' => (float) $item->total_revenue,
+                    'total_qty'     => (int) $item->total_qty,
+                ]);
+            })
+            ->groupBy('category')
+            ->map(fn ($rows, $cat) => [
                 'category'      => $cat,
-                'total_revenue' => round($items->sum('total_revenue'), 2),
-                'total_qty'     => $items->sum('total_qty'),
+                'total_revenue' => round($rows->sum('total_revenue'), 2),
+                'total_qty'     => $rows->sum('total_qty'),
             ])->sortByDesc('total_revenue')->take(5)->values()->toArray();
 
         // ── Recent Orders ──────────────────────────────────
@@ -251,10 +268,10 @@ class Reports extends Page
         ];
 
         // ── Recent Inventory Logs ──────────────────────────
-        $this->recentLogs = InventoryLog::with(['product', 'admin'])
+        $this->recentLogs = InventoryLog::with(['product', 'variant.product.brand', 'admin'])
             ->latest()->limit(6)->get()
             ->map(fn ($log) => [
-                'product' => $log->product?->description ?? 'Unknown',
+                'product' => $log->variant?->display_name ?: ($log->product?->name ?: 'Unknown'),
                 'action'  => $log->action_name,
                 'qty'     => $log->quantity_changed,
                 'admin'   => $log->admin?->first_name ?? 'System',

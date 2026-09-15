@@ -16,19 +16,24 @@ class ProductController extends Controller
      */
     public function index(Request $request)
     {
-        $query = Product::with(['brand', 'category', 'activeVariants'])
+        $query = Product::with(['brand', 'categories', 'activeVariants'])
             ->purchasable();   // active product with at least one in-stock size
 
         if ($request->has('search')) {
-            // Matches the product name OR the manufacturer color code/name —
-            // paint customers search by "888" or "burnt sienna" as often as
-            // by product name. Dashes are normalized the same way codes are
+            // Matches the product name or description OR the manufacturer
+            // color code/name, which now live on the variants — paint
+            // customers search by "888" or "burnt sienna" as often as by
+            // product name. Dashes are normalized the same way codes are
             // stored, so "B-1408" matches however it was typed.
             $search = Product::normalizeColorCode($request->search) ?? $request->search;
             $query->where(function ($q) use ($search) {
-                $q->where('description', 'like', "%{$search}%")
-                  ->orWhere('color_code', 'like', "%{$search}%")
-                  ->orWhere('color_name', 'like', "%{$search}%");
+                $q->where('name', 'like', "%{$search}%")
+                  ->orWhere('description', 'like', "%{$search}%")
+                  ->orWhereHas('variants', fn ($v) => $v
+                      ->where('is_archived', false)
+                      ->where(fn ($c) => $c
+                          ->where('color_code', 'like', "%{$search}%")
+                          ->orWhere('color_name', 'like', "%{$search}%")));
             });
         }
 
@@ -36,8 +41,9 @@ class ProductController extends Controller
             $query->where('brand_id', $request->brand_id);
         }
 
+        // A product sits in several categories now, so this matches the pivot.
         if ($request->has('category_id')) {
-            $query->where('category_id', $request->category_id);
+            $query->whereHas('categories', fn ($q) => $q->whereKey($request->category_id));
         }
 
         // Products whose colour the customer chooses. Drives the "no sage
@@ -74,7 +80,9 @@ class ProductController extends Controller
             return response()->json(['message' => 'Product not available.'], 404);
         }
 
-        $product->load(['brand', 'category', 'activeVariants']);
+        // activeVariants carries the colour/size grid the app's pickers read;
+        // the appended `colors` aggregate is the distinct-shade list on top of it.
+        $product->load(['brand', 'categories', 'activeVariants']);
         return response()->json($product);
     }
 

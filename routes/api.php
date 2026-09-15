@@ -2,6 +2,7 @@
 
 use App\Http\Controllers\Api\MessageController;
 use App\Http\Controllers\Api\AuthController;
+use App\Http\Controllers\Api\BadgeController;
 use App\Http\Controllers\Api\CartController;
 use App\Http\Controllers\Api\ColorController;
 use App\Http\Controllers\Api\OrderController;
@@ -36,6 +37,9 @@ Route::middleware('auth:sanctum')->group(function () {
     // Auth
     Route::post('/auth/logout', [AuthController::class, 'logout']);
     Route::get('/auth/me',      [AuthController::class, 'me']);
+
+    // Counts for the app's tab badges — polled, so kept to two integers
+    Route::get('/badges', [BadgeController::class, 'index']);
 
     // Cart — lines are keyed by cart_item_id so the same product can sit
     // in the cart in several sizes without colliding

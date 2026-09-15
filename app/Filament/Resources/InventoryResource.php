@@ -58,10 +58,14 @@ class InventoryResource extends Resource
     public static function table(Table $table): Table
     {
         return $table
+            // Stock moves without anyone here touching it — every checkout
+            // deducts it. An Adjust Stock decision made against a number from
+            // twenty minutes ago is the risk this closes.
+            ->poll('30s')
             ->query(
                 // Always show out-of-stock and low-stock variants first
                 ProductVariant::query()
-                    ->with(['product.brand', 'product.category'])
+                    ->with(['product.brand', 'product.categories'])
                     ->orderByRaw("
                         CASE
                             WHEN stock = 0 THEN 0
@@ -75,11 +79,13 @@ class InventoryResource extends Resource
                     ->label('')
                     ->circular()
                     ->disk('public')
+                    // Colour lives on the variant now, so the placeholder is
+                    // the shade of THIS can rather than of the whole line.
                     ->defaultImageUrl(fn ($record) =>
                         'https://placehold.co/40x40/' .
-                        ltrim($record->product?->hex_code ?? 'cccccc', '#') .
+                        ltrim($record->hex_code ?? 'cccccc', '#') .
                         '/' .
-                        ltrim($record->product?->hex_code ?? 'cccccc', '#') .
+                        ltrim($record->hex_code ?? 'cccccc', '#') .
                         '?text=+'
                     ),
 
@@ -88,11 +94,24 @@ class InventoryResource extends Resource
                     ->sortable()
                     ->searchable(),
 
-                TextColumn::make('product.description')
+                TextColumn::make('product.name')
                     ->label('Product')
                     ->limit(40)
                     ->searchable()
-                    ->tooltip(fn ($record) => $record->product?->description),
+                    ->tooltip(fn ($record) => $record->product?->name),
+
+                // One row per can, so the shade has to be on the row — two
+                // "4L" lines of the same product are otherwise indistinguishable.
+                TextColumn::make('color_label')
+                    ->label('Color')
+                    ->badge()
+                    ->color('gray')
+                    ->placeholder('—')
+                    ->state(fn ($record) => $record->color_label ?: null)
+                    ->searchable(query: fn ($query, string $search) => $query
+                        ->where(fn ($q) => $q
+                            ->where('color_name', 'like', "%{$search}%")
+                            ->orWhere('color_code', 'like', "%{$search}%"))),
 
                 TextColumn::make('size_volume')
                     ->label('Size')
@@ -173,8 +192,10 @@ class InventoryResource extends Resource
                 SelectFilter::make('category_id')
                     ->label('Category')
                     ->options(fn () => Category::where('is_archived', false)->pluck('category_name', 'id'))
+                    // A product sits in several categories now, so this matches
+                    // on the pivot rather than a column.
                     ->query(fn (Builder $query, array $data) => filled($data['value'] ?? null)
-                        ? $query->whereHas('product', fn ($q) => $q->where('category_id', $data['value']))
+                        ? $query->whereHas('product.categories', fn ($q) => $q->whereKey($data['value']))
                         : $query),
             ])
 
@@ -200,7 +221,12 @@ class InventoryResource extends Resource
                                 'adjustment' => '🔧 Manual Adjustment',
                             ])
                             ->required()
-                            ->live(),
+                            ->live()
+                            // The reasons are per action. Without this, picking
+                            // "Supplier delivery" and then switching to Deduct
+                            // would log a delivery as the reason for removing
+                            // stock — the selection survives the options change.
+                            ->afterStateUpdated(fn ($set) => $set('reason_preset', null)),
 
                         TextInput::make('quantity')
                             ->label('Quantity')
@@ -213,16 +239,38 @@ class InventoryResource extends Resource
                                     : 'This amount will be added to current stock.'
                             ),
 
+                        // Picked from a list rather than typed, so the history
+                        // reads back as a history. "Other" keeps the door open
+                        // for the case the list has not met yet.
+                        Select::make('reason_preset')
+                            ->label('Reason')
+                            ->options(fn ($get) => InventoryLog::reasonOptions($get('action_type')))
+                            ->placeholder('Choose a reason')
+                            ->required()
+                            ->live()
+                            ->disabled(fn ($get) => blank($get('action_type')))
+                            ->helperText(fn ($get) => blank($get('action_type'))
+                                ? 'Choose an action first.'
+                                : null),
+
                         Textarea::make('notes')
-                            ->label('Reason / Notes')
-                            ->placeholder('e.g. Supplier delivery, Damaged items removed, Stock count correction...')
+                            ->label('What happened?')
+                            ->placeholder('Describe the reason for this adjustment...')
                             ->rows(2)
-                            ->maxLength(255),
+                            ->maxLength(255)
+                            ->visible(fn ($get) => $get('reason_preset') === 'other')
+                            ->required(fn ($get) => $get('reason_preset') === 'other'),
                     ])
                     ->action(function (ProductVariant $record, array $data) {
                         $quantity = (int) $data['quantity'];
                         $action   = $data['action_type'];
-                        $notes    = $data['notes'] ?? '';
+
+                        // The preset IS the note. Only "other" falls through to
+                        // what was typed, so the log stores a readable reason
+                        // either way and never the literal string "other".
+                        $notes = $data['reason_preset'] === 'other'
+                            ? trim($data['notes'] ?? '')
+                            : $data['reason_preset'];
 
                         // Deduct actions use a negative quantity
                         if ($action === 'deduct') {

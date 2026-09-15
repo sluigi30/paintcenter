@@ -9,8 +9,13 @@ use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 
 /**
- * One purchasable size of a product — "Anzahl Urethane (4L)".
- * Price, stock, and the low-stock threshold live HERE, not on Product.
+ * One purchasable CAN of a product — "BOYSEN Latex Colors, Burnt Sienna (4L)".
+ *
+ * A variant is a (colour × size × base) combination. Price, stock, and the
+ * low-stock threshold live HERE, not on Product: a 4L of Burnt Sienna and a
+ * 1L of it are separate things on the shelf, and so are two shades of the
+ * same size. Colour is '' on products sold in no particular colour (thinners,
+ * tools) and on custom-colour lines, where the customer picks it at order time.
  */
 #[ObservedBy(ProductVariantObserver::class)]
 class ProductVariant extends Model
@@ -30,6 +35,10 @@ class ProductVariant extends Model
 
     protected $fillable = [
         'product_id',
+        'sort_order',  // the admin's arrangement — see Product::variants()
+        'color_code',  // manufacturer code, e.g. "B-1408"; '' = no code
+        'color_name',  // manufacturer name, e.g. "Burnt Sienna"; '' = unnamed
+        'hex_code',    // screen preview only — never a colour measurement
         'size_volume',
         'base_code',   // '' = no base distinction; 'P' pastel, 'M' medium, 'D' deep
         'price',
@@ -46,7 +55,23 @@ class ProductVariant extends Model
         'is_archived' => 'boolean',
     ];
 
-    protected $appends = ['is_low_stock', 'stock_status'];
+    protected $appends = ['is_low_stock', 'stock_status', 'has_color', 'color_key', 'color_label'];
+
+    /**
+     * Codes pasted from manufacturer sites and PDFs carry Unicode dashes
+     * (‑ – —) that silently fail to match an ASCII hyphen on search. Stored
+     * normalized, and '' rather than null — the identity unique index spans
+     * this column and MySQL treats NULLs there as all different.
+     */
+    public function setColorCodeAttribute(?string $value): void
+    {
+        $this->attributes['color_code'] = Product::normalizeColorCode($value) ?? '';
+    }
+
+    public function setColorNameAttribute(?string $value): void
+    {
+        $this->attributes['color_name'] = trim((string) $value);
+    }
 
     // -------------------------------------------------------
     // Relationships
@@ -89,14 +114,38 @@ class ProductVariant extends Model
         return 'in_stock';
     }
 
-    /** "Anzahl — Urethane Paint (4L)" for alerts and admin modals. */
+    /** False for thinners, tools, and cans of untinted base. */
+    public function getHasColorAttribute(): bool
+    {
+        return $this->color_code !== '' || $this->color_name !== '';
+    }
+
+    /** Groups the variants of one shade together. See Product::$colors. */
+    public function getColorKeyAttribute(): string
+    {
+        return $this->color_code . '|' . $this->color_name;
+    }
+
+    /** "Burnt Sienna (B-1408)", or whichever half exists. '' if neither. */
+    public function getColorLabelAttribute(): string
+    {
+        if ($this->color_name !== '' && $this->color_code !== '') {
+            return "{$this->color_name} ({$this->color_code})";
+        }
+
+        return $this->color_name !== '' ? $this->color_name : $this->color_code;
+    }
+
+    /** "Boysen — Latex Colors · Burnt Sienna (4L)" for alerts and admin modals. */
     public function getDisplayNameAttribute(): string
     {
         $brand = $this->product?->brand?->brand_name;
+        $color = $this->color_label;
 
         return trim(
             ($brand ? "{$brand} — " : '') .
-            ($this->product?->description ?? 'Unknown product') .
+            ($this->product?->name ?: 'Unknown product') .
+            ($color !== '' ? " · {$color}" : '') .
             " ({$this->size_volume})"
         );
     }

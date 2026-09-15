@@ -10,11 +10,14 @@ use App\Models\OrderItem;
 use App\Models\Payment;
 use App\Models\ProductVariant;
 use App\Services\OrderCancellationService;
+use App\Services\AdminOrderAlertService;
 use App\Services\OrderMessageService;
 use App\Jobs\SendOrderSms;
 use App\Services\SmsService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
+use Illuminate\Validation\Rule;
 
 
 class OrderController extends Controller
@@ -34,9 +37,21 @@ class OrderController extends Controller
         $validated = $request->validate([
             'order_type'       => 'required|in:delivery,pickup',
             'shipping_address' => 'required_if:order_type,delivery|nullable|string',
-            'payment_method'   => 'required|in:cash,gcash,card,cod',
+            // Which methods are allowed depends on the order type — see
+            // Order::PAYMENT_METHODS_BY_TYPE. Validated against the list for
+            // the type that was actually sent, so a client that hides the
+            // wrong rows and one that does not both end up honest.
+            'payment_method'   => [
+                'required',
+                Rule::in(Order::PAYMENT_METHODS_BY_TYPE[$request->input('order_type')]
+                    ?? array_merge(...array_values(Order::PAYMENT_METHODS_BY_TYPE))),
+            ],
             'cart_item_ids'    => 'sometimes|array|min:1',
             'cart_item_ids.*'  => 'integer',
+        ], [
+            'payment_method.in' => $request->input('order_type') === 'pickup'
+                ? 'Pickup orders are paid online. Please choose GCash or a card.'
+                : 'That payment method is not available for delivery orders.',
         ]);
 
         // Partial checkout: the client may tick only some cart lines (Shopee/Lazada
@@ -70,7 +85,7 @@ class OrderController extends Controller
                 if ($variant->stock < $quantity) {
                     DB::rollBack();
                     return response()->json([
-                        'message' => "Insufficient stock for {$cartItem->product->description} ({$variant->size_volume}).",
+                        'message' => "Insufficient stock for {$variant->display_name}.",
                     ], 422);
                 }
 
@@ -109,8 +124,11 @@ class OrderController extends Controller
                     'product_variant_id' => $item['variant']->id,
                     'size_volume'        => $item['variant']->size_volume,
                     // Snapshotted like size_volume and unit_price: the variant
-                    // can later be renamed, re-priced or archived, and this
-                    // order must still show what was actually bought.
+                    // can later be recoloured, renamed, re-priced or archived,
+                    // and this order must still show what was actually bought.
+                    'color_code'         => $item['variant']->color_code ?: null,
+                    'color_name'         => $item['variant']->color_name ?: null,
+                    'hex_code'           => $item['variant']->hex_code,
                     'custom_hex'         => $item['custom_hex'],
                     'custom_color_name'  => $item['custom_color_name'],
                     'tint_fee'           => $item['tint_fee'],
@@ -148,6 +166,23 @@ class OrderController extends Controller
             // opens a thread the admin can reply in — customers who have never
             // messaged are otherwise unreachable from the admin inbox.
             OrderMessageService::orderPlaced($order);
+
+            // ...and ring the admin panel's bell, so the store learns about it
+            // without sitting on the orders list waiting for a reload.
+            //
+            // Guarded: everything from here down runs AFTER the commit, but is
+            // still inside the try — an exception would reach a catch that
+            // returns "Order failed" for an order that is already placed and
+            // paid for, and the customer would order again. A bell that did
+            // not ring is not worth a duplicate order.
+            try {
+                AdminOrderAlertService::orderPlaced($order);
+            } catch (\Throwable $e) {
+                Log::warning('New-order admin alert failed', [
+                    'order_id' => $order->id,
+                    'error'    => $e->getMessage(),
+                ]);
+            }
 
             $phone = $request->user()->phone;
 
