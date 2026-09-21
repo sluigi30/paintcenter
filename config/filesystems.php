@@ -28,6 +28,39 @@ return [
     |
     */
 
+    /*
+    |--------------------------------------------------------------------------
+    | Message Attachment Disk
+    |--------------------------------------------------------------------------
+    |
+    | Customers' photos are kept apart from the catalogue on purpose. Product
+    | images and brand logos are PUBLIC by nature - the app fetches them by URL
+    | with no auth - while a photo sent into a message thread is readable only
+    | by the two people in it. R2 has no per-object permissions, so "public
+    | catalogue, private conversation" cannot be one bucket; it has to be two.
+    |
+    | Unset (local development) this falls back to the default disk, so laragon
+    | needs no bucket at all.
+    |
+    */
+
+    'attachments' => env('ATTACHMENTS_DISK'),
+
+    /*
+     * NOTE on Laravel Cloud. Buckets attached there are injected as
+     * LARAVEL_CLOUD_DISK_CONFIG - a JSON array of disks, each with its own
+     * NAME - so there is nothing to define or credential in this file. The
+     * private attachments bucket arrives as the disk `private`.
+     *
+     * ATTACHMENTS_DISK must name that disk EXPLICITLY and must never be left
+     * to follow the default. The `AWS_*` variables belong to whichever bucket
+     * is currently default, and when the public catalogue bucket is attached
+     * for product images it becomes the default - at which point an
+     * unpinned attachments disk would quietly start writing customers'
+     * photographs into a PUBLIC bucket. Pinning it by name is the whole
+     * safeguard.
+     */
+
     'disks' => [
 
         'local' => [
