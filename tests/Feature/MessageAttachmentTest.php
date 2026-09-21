@@ -269,6 +269,22 @@ class MessageAttachmentTest extends TestCase
     }
 
     /**
+     * A photo is fetched by the phone's IMAGE component, which asks for
+     * `image/*` rather than JSON. Laravel's default reply to an
+     * unauthenticated non-JSON request is a redirect to a `login` route this
+     * application does not define - a 500 where a 401 belongs.
+     */
+    public function test_an_unauthenticated_image_request_gets_a_401_not_a_500(): void
+    {
+        $customer   = $this->customer();
+        $admin      = $this->admin();
+        $attachment = $this->attachmentFrom($customer, $admin);
+
+        $this->get("/api/messages/attachments/{$attachment->id}", ['Accept' => 'image/*'])
+            ->assertUnauthorized();
+    }
+
+    /**
      * The panel route is a second door, not a second policy. It exists so the
      * Filament page inherits the panel's session middleware and the panel's
      * own login redirect.
