@@ -31,6 +31,12 @@ class BrandResource extends Resource
 
             FileUpload::make('image')
                 ->image()
+                // Pinned, not left to the default disk. The environment
+                // default is the PRIVATE message-attachment bucket, and a
+                // catalogue image does not belong in it — these are fetched by
+                // URL with no auth, and R2 rejects the visibility calls a
+                // public write to a private bucket produces anyway.
+                ->disk('public')
                 ->directory('brands')
                 ->label('Brand Logo')
                 ->helperText('Shown as the brand tile in the mobile catalog. Square images look best; brands without a logo get a lettered tile.'),
