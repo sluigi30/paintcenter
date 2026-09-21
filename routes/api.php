@@ -1,10 +1,12 @@
 <?php
 
 use App\Http\Controllers\Api\MessageController;
+use App\Http\Controllers\MessageAttachmentController;
 use App\Http\Controllers\Api\AuthController;
 use App\Http\Controllers\Api\BadgeController;
 use App\Http\Controllers\Api\CartController;
 use App\Http\Controllers\Api\ColorController;
+use App\Http\Controllers\Api\MixController;
 use App\Http\Controllers\Api\OrderController;
 use App\Http\Controllers\Api\ProductController;
 use Illuminate\Support\Facades\Route;
@@ -46,6 +48,12 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::prefix('cart')->group(function () {
         Route::get('/',                  [CartController::class, 'summary']);
         Route::post('/add',              [CartController::class, 'add']);
+
+        // A customer-composed mix: a base can plus the pints poured into it,
+        // posted as ONE recipe. Separate from /add because half a recipe in
+        // the cart is not a partial order, it is a different colour.
+        Route::post('/mix',              [MixController::class, 'store']);
+
         Route::delete('/',               [CartController::class, 'clear']);
         Route::put('/{cartItem}',        [CartController::class, 'update']);
         Route::delete('/{cartItem}',     [CartController::class, 'remove']);
@@ -66,5 +74,12 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::get('/thread/{userId}', [MessageController::class, 'thread']);
         Route::post('/send',           [MessageController::class, 'send']);
         Route::patch('/{message}/read', [MessageController::class, 'markRead']);
+
+        // Attachments are served BY THE APP, never from a storage path. The
+        // controller is shared with the admin panel's own route so the two
+        // entry points cannot drift into two different rules about who may
+        // look at a customer's photo.
+        Route::get('/attachments/{attachment}', MessageAttachmentController::class)
+            ->name('api.messages.attachments.show');
     });
 });

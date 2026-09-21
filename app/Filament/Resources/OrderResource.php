@@ -4,17 +4,18 @@ namespace App\Filament\Resources;
 
 use App\Filament\Resources\OrderResource\Pages;
 use App\Models\Order;
+use App\Models\OrderItem;
 use App\Services\OrderCancellationService;
 use Filament\Actions\Action;
+use Filament\Actions\EditAction;
+use Filament\Forms\Components\DatePicker;
+use Filament\Forms\Components\Placeholder;
+use Filament\Forms\Components\Select;
+use Filament\Forms\Components\Textarea;
+use Filament\Forms\Components\TextInput;
 use Filament\Notifications\Notification;
 use Filament\Resources\Resource;
 use Filament\Schemas\Schema;
-use Filament\Forms\Components\Select;
-use Filament\Forms\Components\TextInput;
-use Filament\Forms\Components\Textarea;
-use Filament\Forms\Components\DatePicker;
-use Filament\Forms\Components\Placeholder;
-use Illuminate\Support\HtmlString;
 use Filament\Tables\Columns\TextColumn;
 use Filament\Tables\Filters\Filter;
 use Filament\Tables\Filters\Indicator;
@@ -22,12 +23,17 @@ use Filament\Tables\Filters\SelectFilter;
 use Filament\Tables\Table;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Collection;
+use Illuminate\Support\HtmlString;
 
 class OrderResource extends Resource
 {
     protected static ?string $model = Order::class;
+
     protected static string|\BackedEnum|null $navigationIcon = 'heroicon-o-clipboard-document-list';
+
     protected static string|\UnitEnum|null $navigationGroup = 'Operations';
+
     protected static ?int $navigationSort = 1;
 
     /**
@@ -80,7 +86,7 @@ class OrderResource extends Resource
             Select::make('order_type')
                 ->options([
                     'delivery' => 'Delivery',
-                    'pickup'   => 'Pickup',
+                    'pickup' => 'Pickup',
                 ])
                 ->disabled(),
 
@@ -99,8 +105,8 @@ class OrderResource extends Resource
                 ->disabled()
                 ->visible(fn ($record) => filled($record?->cancellation_reason))
                 ->helperText(fn ($record) => $record?->cancelled_at
-                    ? 'Cancelled by ' . ($record->cancelledByCustomer() ? 'the customer' : ($record->cancelledBy?->name ?? 'the store'))
-                        . ' on ' . $record->cancelled_at->format('M j, Y \a\t g:i A')
+                    ? 'Cancelled by '.($record->cancelledByCustomer() ? 'the customer' : ($record->cancelledBy?->name ?? 'the store'))
+                        .' on '.$record->cancelled_at->format('M j, Y \a\t g:i A')
                     : null)
                 ->columnSpanFull(),
         ]);
@@ -113,6 +119,77 @@ class OrderResource extends Resource
      * is the point: a custom line has to show a large block of the actual
      * colour beside its hex, and a form field cannot do that.
      */
+    /**
+     * A customer-composed mix, written out as something the counter can follow.
+     *
+     * Volumes are stated per can AND totalled, because the two answer different
+     * questions: how much to pour, and what to pour it into. A 4L base with
+     * three pints does not fit back in the 4L can.
+     *
+     * @param  Collection<int,OrderItem>  $lines
+     */
+    protected static function mixRecipe($lines): string
+    {
+        $first = $lines->first();
+        $hex = e($first->custom_hex ?? '#CCCCCC');
+        $label = $first->custom_color_name ? e($first->custom_color_name) : 'Unnamed mix';
+
+        $total = 0.0;
+        $parts = ['base' => '', 'tint' => ''];
+
+        foreach ($lines->sortByDesc(fn ($l) => $l->mix_role === 'base' ? 1 : 0) as $line) {
+            $qty = (int) $line->quantity;
+            $each = (float) ($line->mix_liters ?? 0);
+            $total += $each * $qty;
+
+            $what = e($line->color_name ?: ($line->product?->name ?: 'Paint'));
+            $size = e($line->size_volume ?? '');
+            $vol = number_format($each, 3);
+            $mult = $qty > 1 ? " &times; {$qty}" : '';
+
+            $parts[$line->mix_role === 'base' ? 'base' : 'tint'] .= <<<HTML
+                <div style="display:flex;align-items:center;gap:.5rem;padding:.15rem 0 .15rem 1rem">
+                    <span style="width:14px;height:14px;flex:none;border-radius:3px;background:{$line->hex_code};border:1px solid rgba(0,0,0,.2)"></span>
+                    <span style="flex:1">{$what} <span style="opacity:.6">({$size})</span></span>
+                    <span style="font-family:ui-monospace,monospace">{$vol} L{$mult}</span>
+                </div>
+            HTML;
+        }
+
+        $totalText = number_format($total, 3);
+
+        return <<<HTML
+            <div style="padding:.85rem;border:2px solid #b45309;border-radius:.5rem;margin-bottom:.75rem">
+                <div style="display:flex;gap:.85rem;align-items:center;margin-bottom:.6rem">
+                    <div style="width:56px;height:56px;flex:none;border-radius:.375rem;background:{$hex};border:1px solid rgba(0,0,0,.2)"></div>
+                    <div style="min-width:0">
+                        <div style="font-size:.7rem;font-weight:700;letter-spacing:.05em;color:#b45309">MIX TO ORDER</div>
+                        <div style="font-weight:600">{$label}</div>
+                        <div style="font-size:.875rem;opacity:.75">
+                            target <span style="font-family:ui-monospace,monospace">{$hex}</span>
+                        </div>
+                    </div>
+                </div>
+
+                <div style="font-size:.75rem;font-weight:700;opacity:.6;margin-top:.5rem">BASE</div>
+                {$parts['base']}
+
+                <div style="font-size:.75rem;font-weight:700;opacity:.6;margin-top:.5rem">ADD</div>
+                {$parts['tint']}
+
+                <div style="display:flex;justify-content:space-between;margin-top:.6rem;padding-top:.5rem;border-top:1px solid rgba(128,128,128,.25);font-weight:600">
+                    <span>Total volume</span>
+                    <span style="font-family:ui-monospace,monospace">{$totalText} L</span>
+                </div>
+
+                <div style="margin-top:.5rem;font-size:.75rem;font-weight:600;color:#b45309">
+                    &#9888; Mix as ONE batch — separate batches differ visibly on a wall.<br>
+                    &#9888; The target colour is an estimate. Match the recipe, not the swatch.
+                </div>
+            </div>
+        HTML;
+    }
+
     protected static function mixSheet(?Order $record): HtmlString
     {
         if (! $record?->exists) {
@@ -122,25 +199,35 @@ class OrderResource extends Resource
         $record->loadMissing(['orderItems.product', 'orderItems.variant']);
         $rows = '';
 
-        foreach ($record->orderItems as $item) {
+        // A mix is several lines that have to be POURED TOGETHER. One card per
+        // line shows the counter three cans of the same predicted colour and no
+        // instruction to combine them, which is exactly how three wrong cans
+        // leave the shop. Recipes are printed first, as a block.
+        [$mixed, $plain] = $record->orderItems->partition(fn ($i) => $i->mix_group !== null);
+
+        foreach ($mixed->groupBy('mix_group') as $lines) {
+            $rows .= static::mixRecipe($lines);
+        }
+
+        foreach ($plain as $item) {
             $name = e($item->product?->name ?: 'Deleted product');
             $size = e($item->size_volume ?? '—');
-            $qty  = (int) $item->quantity;
+            $qty = (int) $item->quantity;
 
             if ($item->custom_hex) {
-                $hex   = e($item->custom_hex);
+                $hex = e($item->custom_hex);
                 $label = $item->custom_color_name
                     ? e($item->custom_color_name)
                     : 'Custom colour';
                 // '' means the paint line makes no base distinction.
-                $base     = ProductResource::BASE_SHORT[$item->variant?->base_code ?? ''] ?? '';
-                $baseText = $base !== '' ? ' &middot; ' . e($base) . ' base' : '';
+                $base = ProductResource::BASE_SHORT[$item->variant?->base_code ?? ''] ?? '';
+                $baseText = $base !== '' ? ' &middot; '.e($base).' base' : '';
 
                 // More than one can of one colour must come out of a single
                 // batch — cans mixed separately differ visibly on a wall.
                 $batch = $qty > 1
                     ? '<div style="margin-top:.4rem;font-size:.75rem;font-weight:600;color:#b45309">'
-                        . "Mix all {$qty} cans as ONE batch</div>"
+                        ."Mix all {$qty} cans as ONE batch</div>"
                     : '';
 
                 $rows .= <<<HTML
@@ -165,7 +252,7 @@ class OrderResource extends Resource
                 // recoloured or archived variant must not rewrite an order
                 // the counter has already picked.
                 $swatch = $item->hex_code
-                    ? 'background:' . e($item->hex_code)
+                    ? 'background:'.e($item->hex_code)
                     : 'background:repeating-linear-gradient(45deg,#ccc,#ccc 4px,#eee 4px,#eee 8px)';
 
                 $color = e($item->color_label) ?: 'Ready-mixed';
@@ -199,28 +286,28 @@ class OrderResource extends Resource
                     ->sortable(),
                 TextColumn::make('user.first_name')
                     ->label('Customer')
-                    ->formatStateUsing(fn($record) => $record->user->first_name . ' ' . $record->user->last_name)
+                    ->formatStateUsing(fn ($record) => $record->user->first_name.' '.$record->user->last_name)
                     ->searchable(),
                 TextColumn::make('order_type')
                     ->label('Type')
                     ->badge()
-                    ->color(fn($state) => $state === 'delivery' ? 'info' : 'success'),
+                    ->color(fn ($state) => $state === 'delivery' ? 'info' : 'success'),
                 TextColumn::make('status')
                     ->label('Status')
                     ->badge()
                     // Surface why straight in the list — a cancelled row is the
                     // one an admin most needs context on at a glance
-                    ->description(fn($record) => $record->status === 'cancelled'
+                    ->description(fn ($record) => $record->status === 'cancelled'
                         ? $record->cancellation_reason
                         : null)
-                    ->color(fn($state) => match($state) {
-                        'pending'          => 'warning',
-                        'processing'       => 'info',
-                        'shipped'          => 'primary',
+                    ->color(fn ($state) => match ($state) {
+                        'pending' => 'warning',
+                        'processing' => 'info',
+                        'shipped' => 'primary',
                         'ready_for_pickup' => 'primary',
-                        'completed'        => 'success',
-                        'cancelled'        => 'danger',
-                        default            => 'gray',
+                        'completed' => 'success',
+                        'cancelled' => 'danger',
+                        default => 'gray',
                     }),
                 TextColumn::make('total_amount')
                     ->label('Total')
@@ -232,11 +319,11 @@ class OrderResource extends Resource
                 TextColumn::make('payment.payment_status')
                     ->label('Payment Status')
                     ->badge()
-                    ->color(fn($state) => match($state) {
-                        'paid'    => 'success',
+                    ->color(fn ($state) => match ($state) {
+                        'paid' => 'success',
                         'pending' => 'warning',
-                        'failed'  => 'danger',
-                        default   => 'gray',
+                        'failed' => 'danger',
+                        default => 'gray',
                     }),
                 TextColumn::make('created_at')
                     ->label('Date')
@@ -249,16 +336,16 @@ class OrderResource extends Resource
                 // offering Completed here would just return nothing.
                 SelectFilter::make('status')
                     ->options([
-                        'pending'          => 'Pending',
-                        'processing'       => 'Processing',
-                        'shipped'          => 'Shipped',
+                        'pending' => 'Pending',
+                        'processing' => 'Processing',
+                        'shipped' => 'Shipped',
                         'ready_for_pickup' => 'Ready for Pickup',
                     ])
                     ->visible(fn ($livewire) => ($livewire->activeTab ?? 'active') === 'active'),
                 SelectFilter::make('order_type')
                     ->options([
                         'delivery' => 'Delivery',
-                        'pickup'   => 'Pickup',
+                        'pickup' => 'Pickup',
                     ]),
                 Filter::make('created_at')
                     ->label('Order Date')
@@ -282,19 +369,20 @@ class OrderResource extends Resource
                     ->indicateUsing(function (array $data): array {
                         $indicators = [];
                         if ($data['created_from'] ?? null) {
-                            $indicators[] = Indicator::make('From ' . Carbon::parse($data['created_from'])->format('M d, Y'))
+                            $indicators[] = Indicator::make('From '.Carbon::parse($data['created_from'])->format('M d, Y'))
                                 ->removeField('created_from');
                         }
                         if ($data['created_until'] ?? null) {
-                            $indicators[] = Indicator::make('Until ' . Carbon::parse($data['created_until'])->format('M d, Y'))
+                            $indicators[] = Indicator::make('Until '.Carbon::parse($data['created_until'])->format('M d, Y'))
                                 ->removeField('created_until');
                         }
+
                         return $indicators;
                     }),
             ])
             ->filtersFormColumns(2)
-           ->actions([
-                \Filament\Actions\EditAction::make(),
+            ->actions([
+                EditAction::make(),
 
                 static::advanceStatusAction(),
                 static::revertStatusAction(),
@@ -357,7 +445,7 @@ class OrderResource extends Resource
             ->color('primary')
             ->visible(fn (Order $record) => $record->nextStatus() !== null)
             ->requiresConfirmation()
-            ->modalHeading(fn (Order $record) => 'Move to ' . Order::statusLabel($record->nextStatus()) . '?')
+            ->modalHeading(fn (Order $record) => 'Move to '.Order::statusLabel($record->nextStatus()).'?')
             ->modalDescription('The customer is messaged as soon as this is saved.')
             ->action(function (Order $record) {
                 $next = $record->nextStatus();
@@ -380,7 +468,7 @@ class OrderResource extends Resource
                 $record->update(['status' => $next]);
 
                 Notification::make()
-                    ->title('Order is now ' . Order::statusLabel($next))
+                    ->title('Order is now '.Order::statusLabel($next))
                     ->body('The customer has been told.')
                     ->success()
                     ->send();
@@ -403,7 +491,7 @@ class OrderResource extends Resource
             ->color('gray')
             ->visible(fn (Order $record) => $record->previousStatus() !== null)
             ->requiresConfirmation()
-            ->modalHeading(fn (Order $record) => 'Move back to ' . Order::statusLabel($record->previousStatus()) . '?')
+            ->modalHeading(fn (Order $record) => 'Move back to '.Order::statusLabel($record->previousStatus()).'?')
             ->modalDescription('For correcting a step taken by mistake. The customer is messaged about the change.')
             ->action(function (Order $record) {
                 $previous = $record->previousStatus();
@@ -421,7 +509,7 @@ class OrderResource extends Resource
                 $record->update(['status' => $previous]);
 
                 Notification::make()
-                    ->title('Moved back to ' . Order::statusLabel($previous))
+                    ->title('Moved back to '.Order::statusLabel($previous))
                     ->success()
                     ->send();
             });
@@ -430,7 +518,7 @@ class OrderResource extends Resource
     /** Where the order is, and what it is waiting for, on the edit page. */
     protected static function statusSummary(Order $record): HtmlString
     {
-        $now  = e(Order::statusLabel($record->status));
+        $now = e(Order::statusLabel($record->status));
         $next = $record->nextStatus();
 
         if ($record->status === 'cancelled') {
@@ -438,7 +526,7 @@ class OrderResource extends Resource
         }
 
         $hint = $next
-            ? 'Next: ' . e(Order::statusLabel($next))
+            ? 'Next: '.e(Order::statusLabel($next))
             : 'This order has reached the end of its flow.';
 
         return new HtmlString("<strong>{$now}</strong><br><span style=\"opacity:.7\">{$hint}</span>");
@@ -448,7 +536,7 @@ class OrderResource extends Resource
     {
         return [
             'index' => Pages\ListOrders::route('/'),
-            'edit'  => Pages\EditOrder::route('/{record}/edit'),
+            'edit' => Pages\EditOrder::route('/{record}/edit'),
         ];
     }
 }

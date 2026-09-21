@@ -3,22 +3,21 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
+use App\Jobs\SendOrderSms;
 use App\Models\CartItem;
 use App\Models\InventoryLog;
 use App\Models\Order;
 use App\Models\OrderItem;
 use App\Models\Payment;
 use App\Models\ProductVariant;
-use App\Services\OrderCancellationService;
 use App\Services\AdminOrderAlertService;
+use App\Services\OrderCancellationService;
 use App\Services\OrderMessageService;
-use App\Jobs\SendOrderSms;
 use App\Services\SmsService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Validation\Rule;
-
 
 class OrderController extends Controller
 {
@@ -35,19 +34,19 @@ class OrderController extends Controller
     public function store(Request $request)
     {
         $validated = $request->validate([
-            'order_type'       => 'required|in:delivery,pickup',
+            'order_type' => 'required|in:delivery,pickup',
             'shipping_address' => 'required_if:order_type,delivery|nullable|string',
             // Which methods are allowed depends on the order type — see
             // Order::PAYMENT_METHODS_BY_TYPE. Validated against the list for
             // the type that was actually sent, so a client that hides the
             // wrong rows and one that does not both end up honest.
-            'payment_method'   => [
+            'payment_method' => [
                 'required',
                 Rule::in(Order::PAYMENT_METHODS_BY_TYPE[$request->input('order_type')]
                     ?? array_merge(...array_values(Order::PAYMENT_METHODS_BY_TYPE))),
             ],
-            'cart_item_ids'    => 'sometimes|array|min:1',
-            'cart_item_ids.*'  => 'integer',
+            'cart_item_ids' => 'sometimes|array|min:1',
+            'cart_item_ids.*' => 'integer',
         ], [
             'payment_method.in' => $request->input('order_type') === 'pickup'
                 ? 'Pickup orders are paid online. Please choose GCash or a card.'
@@ -71,19 +70,44 @@ class OrderController extends Controller
             ], 422);
         }
 
+        // A mix checks out whole, or not at all.
+        //
+        // Partial checkout lets the client tick individual lines, and a mix is
+        // several of them. Ticking the base without its colourants would order
+        // a can of plain paint against a swatch of the mixed colour: the
+        // customer pays for one thing and is handed another. The selection is
+        // refused rather than quietly widened, because charging for cans that
+        // were not ticked is its own kind of wrong.
+        if ($selectedIds) {
+            $groups = $cartItems->pluck('mix_group')->filter()->unique();
+
+            foreach ($groups as $group) {
+                $wholeMix = CartItem::where('user_id', $request->user()->id)
+                    ->where('mix_group', $group)
+                    ->count();
+
+                if ($wholeMix !== $cartItems->where('mix_group', $group)->count()) {
+                    return response()->json([
+                        'message' => 'A mixed colour has to be ordered together with every paint that goes into it. Select the whole mix, or leave it for next time.',
+                    ], 422);
+                }
+            }
+        }
+
         DB::beginTransaction();
 
         try {
             $totalAmount = 0;
-            $orderItems  = [];
+            $orderItems = [];
 
             foreach ($cartItems as $cartItem) {
                 // Stock is checked and deducted per VARIANT (size)
-                $variant  = ProductVariant::lockForUpdate()->findOrFail($cartItem->product_variant_id);
+                $variant = ProductVariant::lockForUpdate()->findOrFail($cartItem->product_variant_id);
                 $quantity = $cartItem->quantity;
 
                 if ($variant->stock < $quantity) {
                     DB::rollBack();
+
                     return response()->json([
                         'message' => "Insufficient stock for {$variant->display_name}.",
                     ], 422);
@@ -92,66 +116,75 @@ class OrderController extends Controller
                 // unit_price is the ALL-IN price per can: the base plus the
                 // tint. tint_fee is carried alongside only so the breakdown
                 // can be shown — adding the two again would double-charge.
-                $tintFee       = (float) $cartItem->tint_fee;
-                $unitPrice     = $variant->price + $tintFee;
-                $subtotal      = $unitPrice * $quantity;
-                $totalAmount  += $subtotal;
+                $tintFee = (float) $cartItem->tint_fee;
+                $unitPrice = $variant->price + $tintFee;
+                $subtotal = $unitPrice * $quantity;
+                $totalAmount += $subtotal;
 
                 $orderItems[] = [
-                    'variant'           => $variant,
-                    'quantity'          => $quantity,
-                    'unit_price'        => $unitPrice,
-                    'subtotal'          => $subtotal,
-                    'custom_hex'        => $cartItem->custom_hex,
+                    'variant' => $variant,
+                    'quantity' => $quantity,
+                    'unit_price' => $unitPrice,
+                    'subtotal' => $subtotal,
+                    'custom_hex' => $cartItem->custom_hex,
                     'custom_color_name' => $cartItem->custom_color_name,
-                    'tint_fee'          => $tintFee,
+                    'tint_fee' => $tintFee,
+                    // The recipe travels with the order. Without it the
+                    // counter receives a list of cans and no instruction to
+                    // pour them together.
+                    'mix_group' => $cartItem->mix_group,
+                    'mix_role' => $cartItem->mix_role,
+                    'mix_liters' => $cartItem->mix_liters,
                 ];
             }
 
             $order = Order::create([
-                'user_id'          => $request->user()->id,
-                'order_date'       => now(),
-                'order_type'       => $validated['order_type'],
-                'status'           => 'pending',
-                'total_amount'     => $totalAmount,
+                'user_id' => $request->user()->id,
+                'order_date' => now(),
+                'order_type' => $validated['order_type'],
+                'status' => 'pending',
+                'total_amount' => $totalAmount,
                 'shipping_address' => $validated['shipping_address'] ?? null,
             ]);
 
             foreach ($orderItems as $item) {
                 OrderItem::create([
-                    'order_id'           => $order->id,
-                    'product_id'         => $item['variant']->product_id,
+                    'order_id' => $order->id,
+                    'product_id' => $item['variant']->product_id,
                     'product_variant_id' => $item['variant']->id,
-                    'size_volume'        => $item['variant']->size_volume,
+                    'size_volume' => $item['variant']->size_volume,
                     // Snapshotted like size_volume and unit_price: the variant
                     // can later be recoloured, renamed, re-priced or archived,
                     // and this order must still show what was actually bought.
-                    'color_code'         => $item['variant']->color_code ?: null,
-                    'color_name'         => $item['variant']->color_name ?: null,
-                    'hex_code'           => $item['variant']->hex_code,
-                    'custom_hex'         => $item['custom_hex'],
-                    'custom_color_name'  => $item['custom_color_name'],
-                    'tint_fee'           => $item['tint_fee'],
-                    'quantity'           => $item['quantity'],
-                    'unit_price'         => $item['unit_price'],
-                    'subtotal'           => $item['subtotal'],
+                    'color_code' => $item['variant']->color_code ?: null,
+                    'color_name' => $item['variant']->color_name ?: null,
+                    'hex_code' => $item['variant']->hex_code,
+                    'custom_hex' => $item['custom_hex'],
+                    'custom_color_name' => $item['custom_color_name'],
+                    'tint_fee' => $item['tint_fee'],
+                    'mix_group' => $item['mix_group'],
+                    'mix_role' => $item['mix_role'],
+                    'mix_liters' => $item['mix_liters'],
+                    'quantity' => $item['quantity'],
+                    'unit_price' => $item['unit_price'],
+                    'subtotal' => $item['subtotal'],
                 ]);
 
                 $item['variant']->decrement('stock', $item['quantity']);
 
                 InventoryLog::create([
-                    'product_id'         => $item['variant']->product_id,
+                    'product_id' => $item['variant']->product_id,
                     'product_variant_id' => $item['variant']->id,
-                    'action_name'        => 'order_placed',
-                    'quantity_changed'   => -$item['quantity'],
+                    'action_name' => 'order_placed',
+                    'quantity_changed' => -$item['quantity'],
                 ]);
             }
 
             Payment::create([
-                'order_id'       => $order->id,
+                'order_id' => $order->id,
                 'payment_method' => $validated['payment_method'],
                 'payment_status' => 'pending',
-                'payment_date'   => null,
+                'payment_date' => null,
             ]);
 
             // Only the lines that were actually ordered leave the cart — unticked
@@ -180,7 +213,7 @@ class OrderController extends Controller
             } catch (\Throwable $e) {
                 Log::warning('New-order admin alert failed', [
                     'order_id' => $order->id,
-                    'error'    => $e->getMessage(),
+                    'error' => $e->getMessage(),
                 ]);
             }
 
@@ -198,13 +231,15 @@ class OrderController extends Controller
                 // Queued so checkout does not block on the phone/relay.
                 SendOrderSms::dispatch($order->id, $phone, $smsMessage);
             }
+
             return response()->json([
                 'message' => 'Order placed successfully.',
-                'order'   => $order->load(['orderItems.product.brand', 'orderItems.variant', 'payment']),
+                'order' => $order->load(['orderItems.product.brand', 'orderItems.variant', 'payment']),
             ], 201);
 
         } catch (\Exception $e) {
             DB::rollBack();
+
             return response()->json(['message' => 'Order failed. Please try again.'], 500);
         }
     }
@@ -216,6 +251,7 @@ class OrderController extends Controller
         }
 
         $order->load(['orderItems.product.brand', 'orderItems.variant', 'payment']);
+
         return response()->json($order);
     }
 

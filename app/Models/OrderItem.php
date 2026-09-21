@@ -20,6 +20,9 @@ class OrderItem extends Model
         'custom_hex',         // snapshot: set => custom-tinted colour
         'custom_color_name',  // snapshot: the customer's own label
         'tint_fee',           // snapshot: a later price-list edit must not
+        'mix_group',          // snapshot: ties this line to its recipe
+        'mix_role',           // snapshot: 'base' | 'tint'
+        'mix_liters',         // snapshot: litres in ONE can of this line
         'quantity',           //   rewrite what was actually charged
         'unit_price',
         'subtotal',
@@ -27,6 +30,7 @@ class OrderItem extends Model
 
     protected $casts = [
         'tint_fee' => 'float',
+        'mix_liters' => 'float',
     ];
 
     /**
@@ -36,11 +40,17 @@ class OrderItem extends Model
      * Buy Again. CartItem has the same accessor but does not append it —
      * CartController composes that payload by hand.
      */
-    protected $appends = ['is_custom', 'color_label', 'display_color'];
+    protected $appends = ['is_custom', 'is_mixed', 'color_label', 'display_color'];
 
     public function getIsCustomAttribute(): bool
     {
         return $this->custom_hex !== null;
+    }
+
+    /** Part of a customer-composed mix. Appended so the app can group the lines. */
+    public function getIsMixedAttribute(): bool
+    {
+        return $this->mix_group !== null;
     }
 
     /** "Burnt Sienna (B-1408)" for a ready-mixed line, the customer's label for a custom one. */

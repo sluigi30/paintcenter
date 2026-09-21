@@ -23,12 +23,15 @@ class ColorService
 {
     /** CIE standard illuminant D65, the sRGB white point. */
     private const WHITE_X = 0.95047;
+
     private const WHITE_Y = 1.00000;
+
     private const WHITE_Z = 1.08883;
 
     /** (6/29)^3 — the knee where the CIELAB transfer function turns linear. */
     private const EPSILON = 0.008856451679035631;
-    private const KAPPA   = 7.787037037037035;   // (1/3)(29/6)^2
+
+    private const KAPPA = 7.787037037037035;   // (1/3)(29/6)^2
 
     // -------------------------------------------------------
     // Input handling
@@ -47,14 +50,14 @@ class ColorService
         $hex = ltrim(trim($hex), '#');
 
         if (preg_match('/^[0-9a-fA-F]{3}$/', $hex)) {
-            $hex = $hex[0] . $hex[0] . $hex[1] . $hex[1] . $hex[2] . $hex[2];
+            $hex = $hex[0].$hex[0].$hex[1].$hex[1].$hex[2].$hex[2];
         }
 
         if (! preg_match('/^[0-9a-fA-F]{6}$/', $hex)) {
             return null;
         }
 
-        return '#' . strtoupper($hex);
+        return '#'.strtoupper($hex);
     }
 
     /** @return array{0:int,1:int,2:int}|null 0-255 per channel */
@@ -116,12 +119,13 @@ class ColorService
         $z = self::WHITE_Z * self::labFInverse($fz);
 
         // CIE XYZ (D65) -> linear sRGB
-        $r =  3.2404542 * $x - 1.5371385 * $y - 0.4985314 * $z;
+        $r = 3.2404542 * $x - 1.5371385 * $y - 0.4985314 * $z;
         $g = -0.9692660 * $x + 1.8760108 * $y + 0.0415560 * $z;
-        $b =  0.0556434 * $x - 0.2040259 * $y + 1.0572252 * $z;
+        $b = 0.0556434 * $x - 0.2040259 * $y + 1.0572252 * $z;
 
         $channels = array_map(function ($c) {
             $c = self::linearToSrgb($c);
+
             return str_pad(
                 strtoupper(dechex((int) round(max(0, min(1, $c)) * 255))),
                 2,
@@ -130,7 +134,7 @@ class ColorService
             );
         }, [$r, $g, $b]);
 
-        return '#' . implode('', $channels);
+        return '#'.implode('', $channels);
     }
 
     /** Chroma — distance from the neutral axis. How saturated the colour is. */
@@ -160,8 +164,8 @@ class ColorService
         }
 
         $cfg = config('paint.base');
-        $l   = $lab['l'];
-        $c   = self::chroma($lab);
+        $l = $lab['l'];
+        $c = self::chroma($lab);
 
         // Light AND muted -> pastel base.
         if ($l > $cfg['pastel']['min_l'] && $c < $cfg['pastel']['max_c']) {
@@ -249,7 +253,7 @@ class ColorService
                 break;
             }
 
-            $scale     = min(1.0, $target / $c);
+            $scale = min(1.0, $target / $c);
             $lab['a'] *= $scale;
             $lab['b'] *= $scale;
 
@@ -276,17 +280,107 @@ class ColorService
             return null;
         }
 
-        $lab      = self::hexToLab($normalized);
-        $inGamut  = self::isInGamut($normalized);
+        $lab = self::hexToLab($normalized);
+        $inGamut = self::isInGamut($normalized);
 
         return [
-            'hex'             => $normalized,
-            'lightness'       => round($lab['l'], 2),
-            'chroma'          => round(self::chroma($lab), 2),
-            'base_code'       => self::baseCodeFor($normalized),
-            'in_gamut'        => $inGamut,
+            'hex' => $normalized,
+            'lightness' => round($lab['l'], 2),
+            'chroma' => round(self::chroma($lab), 2),
+            'base_code' => self::baseCodeFor($normalized),
+            'in_gamut' => $inGamut,
             'nearest_mixable' => $inGamut ? null : self::clampToGamut($normalized),
         ];
+    }
+
+    // -------------------------------------------------------
+    // Mixing — predicting the colour of a customer's recipe
+    // -------------------------------------------------------
+
+    /**
+     * The colour you get by pouring these paints together.
+     *
+     * Single-constant Kubelka-Munk per RGB channel. Subtractive, because
+     * paint is: a naive channel average says a black pint in 4L of white
+     * stays #E7E7E7, which is not a mix, it is arithmetic. This says #696969.
+     *
+     * Runs on gamma-encoded sRGB rather than linearised reflectance — see the
+     * note in config/paint.php for the measurement behind that choice.
+     *
+     * OVER-PREDICTS DARK ADDITIONS. The single-constant model has one optical
+     * constant where paint has two, so it cannot know that titanium white
+     * scatters far more than a colourant absorbs. Correct it per ingredient
+     * with `strength`, calibrated against real mixes at the counter.
+     *
+     * @param  array<int,array{hex:string,liters:float,strength?:float}>  $components
+     *                                                                                 `liters` is the component's TOTAL contribution (cans x can size).
+     * @return string|null null when nothing usable was passed
+     */
+    public static function mix(array $components): ?string
+    {
+        $usable = [];
+
+        foreach ($components as $c) {
+            $hex = self::normalizeHex($c['hex'] ?? null);
+            $liters = (float) ($c['liters'] ?? 0);
+
+            // A component with no colour on file or no volume is not a
+            // component. Skipped rather than fatal: one variant missing a
+            // hex_code should not lose the customer their whole recipe.
+            if ($hex === null || $liters <= 0) {
+                continue;
+            }
+
+            $usable[] = [
+                'rgb' => self::hexToRgb($hex),
+                'hex' => $hex,
+                'liters' => $liters,
+                'strength' => max(0.0, (float) ($c['strength'] ?? 1.0)),
+            ];
+        }
+
+        if ($usable === []) {
+            return null;
+        }
+
+        // One component is not a mix. Short-circuited so a lone paint returns
+        // ITSELF exactly — the clamp below would otherwise shift it by a
+        // rounding step, and a base with no tints yet must show its own colour.
+        if (count($usable) === 1) {
+            return $usable[0]['hex'];
+        }
+
+        $total = array_sum(array_column($usable, 'liters'));
+        $cfg = config('paint.mix');
+        $floor = (float) $cfg['reflectance_floor'];
+        $ceil = (float) $cfg['reflectance_ceil'];
+
+        $channels = [];
+
+        for ($ch = 0; $ch < 3; $ch++) {
+            $ks = 0.0;
+
+            foreach ($usable as $c) {
+                $r = min($ceil, max($floor, $c['rgb'][$ch] / 255));
+
+                // Kubelka-Munk: absorption over scattering for an opaque film.
+                $ks += ($c['liters'] / $total)
+                    * ((1 - $r) ** 2 / (2 * $r))
+                    * $c['strength'];
+            }
+
+            // Invert back to reflectance.
+            $r = 1 + $ks - sqrt($ks ** 2 + 2 * $ks);
+
+            $channels[] = str_pad(
+                strtoupper(dechex((int) round(max(0.0, min(1.0, $r)) * 255))),
+                2,
+                '0',
+                STR_PAD_LEFT
+            );
+        }
+
+        return '#'.implode('', $channels);
     }
 
     // -------------------------------------------------------

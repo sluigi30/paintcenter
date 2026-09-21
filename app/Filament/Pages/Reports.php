@@ -2,343 +2,316 @@
 
 namespace App\Filament\Pages;
 
-use App\Models\InventoryLog;
-use App\Models\Order;
-use App\Models\OrderItem;
-use App\Models\Product;
-use App\Models\ProductVariant;
-use App\Models\User;
+use App\Models\ReportPreset;
+use App\Services\Reports\PresetPayload;
+use App\Services\Reports\ReportBuilder;
+use App\Services\Reports\ReportCharts;
+use App\Services\Reports\ReportExport;
+use App\Services\Reports\ReportPeriod;
+use App\Services\Reports\ReportRange;
+use App\Support\Reports\ReportSection;
+use App\Support\Reports\ReportSections;
 use Filament\Pages\Page;
-use Illuminate\Support\Carbon;
-use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Collection;
+use Livewire\Attributes\Computed;
 use Livewire\Attributes\Url;
 
+/**
+ * The reports screen.
+ *
+ * Deliberately thin. It holds the admin's choices and nothing else: no queries,
+ * no aggregation, no formatting. Everything on the page comes out of one
+ * ReportBuilder payload, and the printed document builds the same payload from
+ * the same choices — which is what keeps the screen and the paper from ever
+ * disagreeing. The page it replaces computed roughly fifteen aggregates inline
+ * and then restated them all a second time for print.
+ */
 class Reports extends Page
 {
     protected string $view = 'filament.pages.reports';
+
     protected static ?string $title = 'Reports';
+
     protected static ?string $navigationLabel = 'Reports';
+
     protected static \BackedEnum|string|null $navigationIcon = 'heroicon-o-chart-bar';
 
-    // ── Date Range ─────────────────────────────────────────
     #[Url]
-    public string $dateFrom = '';
+    public string $from = '';
 
     #[Url]
-    public string $dateTo = '';
+    public string $to = '';
 
-    // ── Comparison Range ───────────────────────────────────
+    #[Url]
+    public string $compareMode = ReportPeriod::COMPARE_PREVIOUS;
+
     #[Url]
     public string $compareFrom = '';
 
     #[Url]
     public string $compareTo = '';
 
+    /**
+     * Null means "let the span decide". An explicit value is never overridden —
+     * an admin who asks for daily grouping over a long range gets it, with a
+     * warning rather than a silent downgrade.
+     */
     #[Url]
-    public bool $compareEnabled = false;
+    public ?string $granularity = null;
 
-    // ── KPI Cards ──────────────────────────────────────────
-    public float $totalRevenue      = 0;
-    public float $compareRevenue    = 0;
-    public int   $totalOrders       = 0;
-    public int   $compareOrders     = 0;
-    public float $avgOrderValue     = 0;
-    public float $compareAvgOrder   = 0;
-    public int   $totalCustomers    = 0;
-    public int   $newCustomers      = 0;
-    public int   $compareNewCustomers = 0;
-    public int   $pendingOrders     = 0;
+    /**
+     * Deliberately untyped.
+     *
+     * Livewire hydrates this straight from the query string before mount runs,
+     * and the print link carries the section list comma-joined
+     * (?sections=summary,colors). Typed `array`, that assignment is a TypeError
+     * and the page 500s — so pasting a print URL back into the address bar, or
+     * sharing one, broke the page it came from. Normalised in mount() instead,
+     * which makes both spellings work.
+     *
+     * @var array<int, string>|string
+     */
+    #[Url]
+    public $sections = [];
 
-    // ── Charts ─────────────────────────────────────────────
-    public array $salesChart        = [];
-    public array $compareChart      = [];
-    public array $ordersByStatus    = [];
-    public array $revenueByType     = [];
+    #[Url]
+    public int $topN = 10;
 
-    // ── Tables ─────────────────────────────────────────────
-    public array $topProducts       = [];
-    public array $topCategories     = [];
-    public array $recentOrders      = [];
+    /**
+     * Side by side by default.
+     *
+     * Overlaying two periods on one chart draws the comparison against the
+     * CURRENT period's date axis, which is wrong whenever the two windows are
+     * different lengths — year over year across a leap year, or any custom
+     * range. Split gives each its own axis, on a shared scale.
+     */
+    #[Url]
+    public string $comparisonLayout = ReportCharts::LAYOUT_SPLIT;
 
-    // ── Inventory ──────────────────────────────────────────
-    public array $inventoryStats    = [];
-    public array $recentLogs        = [];
+    public bool $showBuilder = false;
+
+    // -- Saved presets -------------------------------------
+
+    public ?int $presetId = null;
+
+    public string $presetName = '';
+
+    /**
+     * Whether the saved range is a rule ("last 30 days") or two fixed dates.
+     * Defaults to the rule when the current range happens to be one, because
+     * a preset that needs its dates re-picked every month saves nobody a click.
+     */
+    public bool $presetRolling = true;
 
     public function mount(): void
     {
-        if (empty($this->dateFrom)) {
-            $this->dateFrom = now()->subDays(29)->format('Y-m-d');
-        }
-        if (empty($this->dateTo)) {
-            $this->dateTo = now()->format('Y-m-d');
-        }
-        if (empty($this->compareFrom) || empty($this->compareTo)) {
-            $this->autoSetComparePeriod();
-        }
-        $this->loadReports();
-    }
-
-    public function updatedDateFrom(): void  { $this->autoSetComparePeriod(); $this->loadReports(); }
-    public function updatedDateTo(): void    { $this->autoSetComparePeriod(); $this->loadReports(); }
-    public function updatedCompareFrom(): void  { $this->loadReports(); }
-    public function updatedCompareTo(): void    { $this->loadReports(); }
-    public function updatedCompareEnabled(): void { $this->loadReports(); }
-
-    private function autoSetComparePeriod(): void
-    {
-        $from = Carbon::parse($this->dateFrom);
-        $to   = Carbon::parse($this->dateTo);
-        $days = $from->diffInDays($to) + 1;
-        $this->compareTo   = $from->copy()->subDay()->format('Y-m-d');
-        $this->compareFrom = $from->copy()->subDays($days)->format('Y-m-d');
-    }
-
-    private function mainRange(): array
-    {
-        return [
-            Carbon::parse($this->dateFrom)->startOfDay(),
-            Carbon::parse($this->dateTo)->endOfDay(),
-        ];
-    }
-
-    private function compareRange(): array
-    {
-        return [
-            Carbon::parse($this->compareFrom)->startOfDay(),
-            Carbon::parse($this->compareTo)->endOfDay(),
-        ];
-    }
-
-    public function loadReports(): void
-    {
-        [$from, $to]   = $this->mainRange();
-        [$cFrom, $cTo] = $this->compareRange();
-
-        // dayCount() works on bare dates — diffInDays() against an endOfDay
-        // timestamp returns a float (30.99…) that misclassified 31-day
-        // ranges as monthly.
-        $daily = $this->dayCount() <= 31;
-
-        // ── Cross-database date grouping ───────────────────
-        $driver = DB::getDriverName();
-        if ($driver === 'sqlite') {
-            $dateFmt = $daily
-                ? "strftime('%Y-%m-%d', created_at)"
-                : "strftime('%Y-%m', created_at)";
-        } else {
-            $dateFmt = $daily
-                ? "DATE_FORMAT(created_at, '%Y-%m-%d')"
-                : "DATE_FORMAT(created_at, '%Y-%m')";
+        if ($this->from === '') {
+            $this->from = now()->subDays(29)->toDateString();
         }
 
-        // ── KPIs ───────────────────────────────────────────
-        $this->totalRevenue = Order::whereBetween('created_at', [$from, $to])
-            ->where('status', '!=', 'cancelled')->sum('total_amount');
+        if ($this->to === '') {
+            $this->to = now()->toDateString();
+        }
 
-        $this->compareRevenue = Order::whereBetween('created_at', [$cFrom, $cTo])
-            ->where('status', '!=', 'cancelled')->sum('total_amount');
+        if (is_string($this->sections)) {
+            $this->sections = array_values(array_filter(explode(',', $this->sections)));
+        }
 
-        $this->totalOrders = Order::whereBetween('created_at', [$from, $to])->count();
-        $this->compareOrders = Order::whereBetween('created_at', [$cFrom, $cTo])->count();
+        // Unknown keys are dropped rather than rejected, so a link naming a
+        // section that has since been renamed still opens.
+        $this->sections = array_values(array_intersect(
+            (array) $this->sections,
+            array_keys(ReportSections::all()),
+        ));
 
-        $this->avgOrderValue = $this->totalOrders > 0
-            ? round($this->totalRevenue / $this->totalOrders, 2) : 0;
+        if ($this->sections === []) {
+            $this->sections = ReportSections::defaultKeys();
+        }
+    }
 
-        $this->compareAvgOrder = $this->compareOrders > 0
-            ? round($this->compareRevenue / $this->compareOrders, 2) : 0;
-
-        $this->totalCustomers = User::where('role', 'customer')->count();
-
-        $this->newCustomers = User::where('role', 'customer')
-            ->whereBetween('created_at', [$from, $to])->count();
-
-        $this->compareNewCustomers = User::where('role', 'customer')
-            ->whereBetween('created_at', [$cFrom, $cTo])->count();
-
-        $this->pendingOrders = Order::where('status', 'pending')->count();
-
-        // ── Sales Chart ────────────────────────────────────
-        $salesRows = Order::whereBetween('created_at', [$from, $to])
-            ->where('status', '!=', 'cancelled')
-            ->selectRaw("{$dateFmt} as label, SUM(total_amount) as revenue, COUNT(*) as orders")
-            ->groupByRaw($dateFmt)
-            ->get()
-            ->keyBy('label');
-
-        $this->salesChart = $this->fillSeries($salesRows, $from, $to, $daily);
-
-        $this->compareChart = $this->compareEnabled
-            ? $this->fillSeries(
-                Order::whereBetween('created_at', [$cFrom, $cTo])
-                    ->where('status', '!=', 'cancelled')
-                    ->selectRaw("{$dateFmt} as label, SUM(total_amount) as revenue, COUNT(*) as orders")
-                    ->groupByRaw($dateFmt)
-                    ->get()
-                    ->keyBy('label'),
-                $cFrom, $cTo, $daily)
-            : [];
-
-        // ── Orders by Status ───────────────────────────────
-        $this->ordersByStatus = Order::whereBetween('created_at', [$from, $to])
-            ->selectRaw('status, COUNT(*) as count, SUM(total_amount) as total')
-            ->groupBy('status')->get()
-            ->map(fn ($row) => [
-                'status' => $row->status,
-                'count'  => (int) $row->count,
-                'total'  => (float) $row->total,
-            ])->toArray();
-
-        // ── Revenue by Order Type ──────────────────────────
-        $this->revenueByType = Order::whereBetween('created_at', [$from, $to])
-            ->where('status', '!=', 'cancelled')
-            ->selectRaw('order_type, COUNT(*) as count, SUM(total_amount) as total')
-            ->groupBy('order_type')->get()
-            ->map(fn ($row) => [
-                'type'  => $row->order_type,
-                'count' => (int) $row->count,
-                'total' => (float) $row->total,
-            ])->toArray();
-
-        // ── Top Products ───────────────────────────────────
-        $this->topProducts = OrderItem::with(['product.brand', 'product.variants'])
-            ->whereHas('order', fn ($q) => $q
-                ->whereBetween('created_at', [$from, $to])
-                ->where('status', '!=', 'cancelled'))
-            ->selectRaw('product_id, SUM(quantity) as total_qty, SUM(subtotal) as total_revenue')
-            ->groupBy('product_id')->orderByDesc('total_revenue')->limit(8)->get()
-            ->map(fn ($item) => [
-                'name'          => \Str::limit($item->product?->name ?: 'Unknown', 45),
-                'brand'         => $item->product?->brand?->brand_name ?? '—',
-                // Rows are grouped by product, and a product now spans several
-                // shades — so this swatch is decorative: the first colour of
-                // the line, not the one that sold.
-                'hex_code'      => ltrim($item->product?->colors[0]['hex_code'] ?? 'CCCCCC', '#'),
-                'total_qty'     => (int) $item->total_qty,
-                'total_revenue' => (float) $item->total_revenue,
-            ])->toArray();
-
-        // ── Top Categories ─────────────────────────────────
-        $this->topCategories = OrderItem::with(['product.categories'])
-            ->whereHas('order', fn ($q) => $q
-                ->whereBetween('created_at', [$from, $to])
-                ->where('status', '!=', 'cancelled'))
-            ->selectRaw('product_id, SUM(subtotal) as total_revenue, SUM(quantity) as total_qty')
-            ->groupBy('product_id')->get()
-            // A product can sit in several categories now, so its revenue is
-            // counted under EACH one it belongs to. These totals therefore
-            // overlap and do not add up to the period's revenue: the ranking
-            // answers "how much business touched this category", not "how was
-            // revenue split".
-            ->flatMap(function ($item) {
-                $categories = $item->product?->categories->pluck('category_name')->all();
-
-                return collect($categories ?: ['Uncategorized'])->map(fn ($name) => [
-                    'category'      => $name,
-                    'total_revenue' => (float) $item->total_revenue,
-                    'total_qty'     => (int) $item->total_qty,
-                ]);
-            })
-            ->groupBy('category')
-            ->map(fn ($rows, $cat) => [
-                'category'      => $cat,
-                'total_revenue' => round($rows->sum('total_revenue'), 2),
-                'total_qty'     => $rows->sum('total_qty'),
-            ])->sortByDesc('total_revenue')->take(5)->values()->toArray();
-
-        // ── Recent Orders ──────────────────────────────────
-        $this->recentOrders = Order::with(['user', 'payment'])
-            ->latest()->limit(10)->get()
-            ->map(fn ($order) => [
-                'id'       => $order->id,
-                'customer' => trim(($order->user?->first_name . ' ' . $order->user?->last_name)) ?: 'Guest',
-                'status'   => $order->status,
-                'type'     => $order->order_type,
-                'total'    => (float) $order->total_amount,
-                'payment'  => $order->payment?->payment_status ?? 'pending',
-                'date'     => $order->created_at->format('M d, Y'),
-            ])->toArray();
-
-        // ── Inventory Stats (stock lives per variant/size) ─
-        $this->inventoryStats = [
-            'total_products' => Product::count(),
-            'total_stock'    => ProductVariant::sum('stock'),
-            'low_stock'      => ProductVariant::lowStock()->where('stock', '>', 0)->count(),
-            'out_of_stock'   => ProductVariant::outOfStock()->count(),
-            'stock_value'    => ProductVariant::selectRaw('SUM(stock * price) as value')->value('value') ?? 0,
-        ];
-
-        // ── Recent Inventory Logs ──────────────────────────
-        $this->recentLogs = InventoryLog::with(['product', 'variant.product.brand', 'admin'])
-            ->latest()->limit(6)->get()
-            ->map(fn ($log) => [
-                'product' => $log->variant?->display_name ?: ($log->product?->name ?: 'Unknown'),
-                'action'  => $log->action_name,
-                'qty'     => $log->quantity_changed,
-                'admin'   => $log->admin?->first_name ?? 'System',
-                'date'    => $log->created_at->format('M d, h:i A'),
-            ])->toArray();
-
-        // ── Notify JS to redraw charts ─────────────────────
-        $this->dispatch('rpt:data',
-            sales:          $this->salesChart,
-            compare:        $this->compareChart,
-            status:         $this->ordersByStatus,
-            compareEnabled: $this->compareEnabled,
+    public function period(): ReportPeriod
+    {
+        return ReportPeriod::make(
+            $this->from,
+            $this->to,
+            $this->compareMode,
+            $this->compareFrom ?: null,
+            $this->compareTo ?: null,
+            $this->granularity,
         );
     }
 
     /**
-     * Expand grouped query rows into a gapless series over the whole range —
-     * days/months with no sales become zero points so the line chart always
-     * spans the selected period instead of collapsing to scattered dots.
+     * The one payload the whole page renders from. Computed, so it is built
+     * once per request however many partials read it.
      */
-    private function fillSeries(\Illuminate\Support\Collection $rows, Carbon $from, Carbon $to, bool $daily): array
+    #[Computed]
+    public function report(): array
     {
-        $series = [];
-        $cursor = $daily ? $from->copy()->startOfDay() : $from->copy()->startOfMonth();
+        return ReportBuilder::make(
+            $this->period(),
+            $this->sections,
+            [
+                'top_n' => $this->topN,
+                'comparison_layout' => $this->comparisonLayout,
+            ],
+        )->build();
+    }
 
-        while ($cursor->lte($to)) {
-            $key = $cursor->format($daily ? 'Y-m-d' : 'Y-m');
-            $row = $rows->get($key);
-            $series[] = [
-                'label'   => $cursor->format($daily ? 'M d' : 'M Y'),
-                'revenue' => (float) ($row->revenue ?? 0),
-                'orders'  => (int) ($row->orders ?? 0),
-            ];
-            $daily ? $cursor->addDay() : $cursor->addMonth();
+    /** @return array<string, array<int, ReportSection>> */
+    public function sectionCatalog(): array
+    {
+        return ReportSections::grouped();
+    }
+
+    public function toggleSection(string $key): void
+    {
+        $this->sections = in_array($key, $this->sections, true)
+            ? array_values(array_diff($this->sections, [$key]))
+            : [...$this->sections, $key];
+    }
+
+    public function selectAllSections(): void
+    {
+        $this->sections = array_keys(ReportSections::all());
+    }
+
+    public function resetSections(): void
+    {
+        $this->sections = ReportSections::defaultKeys();
+    }
+
+    // -- Saved presets -------------------------------------
+
+    /** @return Collection<int, ReportPreset> */
+    public function presets(): Collection
+    {
+        return auth()->user()
+            ? ReportPreset::ownedBy(auth()->user())->get()
+            : collect();
+    }
+
+    /** The current state, in the shape a preset stores. */
+    private function currentState(): array
+    {
+        return [
+            'from' => $this->from,
+            'to' => $this->to,
+            'sections' => $this->sections,
+            'granularity' => $this->granularity,
+            'compare_mode' => $this->compareMode,
+            'compare_from' => $this->compareFrom,
+            'compare_to' => $this->compareTo,
+            'comparison_layout' => $this->comparisonLayout,
+            'top_n' => $this->topN,
+        ];
+    }
+
+    /** True when the current dates match a rolling rule, so the UI can say so. */
+    public function detectedRange(): ?string
+    {
+        return ReportRange::detect($this->from, $this->to);
+    }
+
+    public function savePreset(): void
+    {
+        $name = trim($this->presetName);
+
+        if ($name === '' || ! auth()->user()) {
+            return;
         }
 
-        return $series;
+        // Saving under an existing name updates it, rather than leaving two
+        // rows an admin cannot tell apart.
+        $preset = ReportPreset::updateOrCreate(
+            ['user_id' => auth()->id(), 'name' => $name],
+            ['payload' => PresetPayload::capture($this->currentState(), $this->presetRolling)],
+        );
+
+        $this->presetId = $preset->id;
+        $this->presetName = '';
     }
 
-    // ── Helpers ────────────────────────────────────────────
-    public function pctChange(float $current, float $previous): float
+    public function applyPreset(int $id): void
     {
-        if ($previous == 0) return $current > 0 ? 100 : 0;
-        return round((($current - $previous) / $previous) * 100, 1);
+        $preset = ReportPreset::ownedBy(auth()->user())->find($id);
+
+        if (! $preset) {
+            return;
+        }
+
+        $state = PresetPayload::resolve($preset->payload ?? []);
+
+        $this->from = $state['from'];
+        $this->to = $state['to'];
+        $this->sections = $state['sections'];
+        $this->granularity = $state['granularity'];
+        $this->compareMode = $state['compare_mode'];
+        $this->compareFrom = $state['compare_from'];
+        $this->compareTo = $state['compare_to'];
+        $this->comparisonLayout = $state['comparison_layout'];
+        $this->topN = $state['top_n'];
+        $this->presetId = $preset->id;
+
+        unset($this->report);
+        $this->updated();
     }
 
-    public function revenueChange(): float  { return $this->pctChange($this->totalRevenue,  $this->compareRevenue); }
-    public function ordersChange(): float   { return $this->pctChange($this->totalOrders,   $this->compareOrders); }
-    public function avgOrderChange(): float { return $this->pctChange($this->avgOrderValue, $this->compareAvgOrder); }
-    public function newCustChange(): float  { return $this->pctChange($this->newCustomers,  $this->compareNewCustomers); }
-
-    public function dayCount(): int
+    public function deletePreset(int $id): void
     {
-        return Carbon::parse($this->dateFrom)->diffInDays(Carbon::parse($this->dateTo)) + 1;
+        ReportPreset::ownedBy(auth()->user())->find($id)?->delete();
+
+        if ($this->presetId === $id) {
+            $this->presetId = null;
+        }
     }
 
-    public function periodLabel(): string
+    /** A section's CSV link, or null when it has nothing tabular to give. */
+    public function exportUrl(string $section): ?string
     {
-        return Carbon::parse($this->dateFrom)->format('M d, Y')
-            . ' – '
-            . Carbon::parse($this->dateTo)->format('M d, Y');
+        if (! ReportExport::isExportable($section)) {
+            return null;
+        }
+
+        return route('filament.admin.reports.export', array_filter([
+            'section' => $section,
+            'from' => $this->from,
+            'to' => $this->to,
+            'compare_mode' => $this->compareMode,
+            'compare_from' => $this->compareFrom ?: null,
+            'compare_to' => $this->compareTo ?: null,
+            'granularity' => $this->granularity,
+            'top_n' => $this->topN,
+        ]));
     }
 
-    public function comparePeriodLabel(): string
+    /** The printed document is the same choices, rendered on paper. */
+    public function printUrl(): string
     {
-        return Carbon::parse($this->compareFrom)->format('M d, Y')
-            . ' – '
-            . Carbon::parse($this->compareTo)->format('M d, Y');
+        return route('filament.admin.reports.print', array_filter([
+            'from' => $this->from,
+            'to' => $this->to,
+            'compare_mode' => $this->compareMode,
+            'compare_from' => $this->compareFrom ?: null,
+            'compare_to' => $this->compareTo ?: null,
+            'granularity' => $this->granularity,
+            'top_n' => $this->topN,
+            'layout' => $this->comparisonLayout,
+            'sections' => implode(',', $this->sections),
+        ]));
+    }
+
+    /**
+     * Hand the browser the NEW chart specs on every change.
+     *
+     * The canvases sit behind wire:ignore so a morph cannot blank them — which
+     * also means their data-chart attributes never update. Re-rendering from
+     * the DOM therefore redrew the previous configuration, and changing the
+     * grouping or the dates appeared to do nothing until a manual refresh. The
+     * specs travel in the event instead, so what is drawn is always current.
+     */
+    public function updated(): void
+    {
+        $this->dispatch('rpt:charts', specs: ReportCharts::flatten($this->report['charts']));
     }
 }

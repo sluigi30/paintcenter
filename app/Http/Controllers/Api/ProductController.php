@@ -3,6 +3,8 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
+use App\Models\Brand;
+use App\Models\Category;
 use App\Models\Product;
 use Illuminate\Http\Request;
 
@@ -28,12 +30,12 @@ class ProductController extends Controller
             $search = Product::normalizeColorCode($request->search) ?? $request->search;
             $query->where(function ($q) use ($search) {
                 $q->where('name', 'like', "%{$search}%")
-                  ->orWhere('description', 'like', "%{$search}%")
-                  ->orWhereHas('variants', fn ($v) => $v
-                      ->where('is_archived', false)
-                      ->where(fn ($c) => $c
-                          ->where('color_code', 'like', "%{$search}%")
-                          ->orWhere('color_name', 'like', "%{$search}%")));
+                    ->orWhere('description', 'like', "%{$search}%")
+                    ->orWhereHas('variants', fn ($v) => $v
+                        ->where('is_archived', false)
+                        ->where(fn ($c) => $c
+                            ->where('color_code', 'like', "%{$search}%")
+                            ->orWhere('color_name', 'like', "%{$search}%")));
             });
         }
 
@@ -52,6 +54,29 @@ class ProductController extends Controller
         // search above to match on.
         if ($request->boolean('tintable')) {
             $query->where('is_custom_color', true);
+        }
+
+        // Ingredients for a customer-composed mix.
+        //
+        //   mixable=tint   pint cans — what colour is ADDED by
+        //   mixable=base   any size  — what the mix is STARTED from
+        //
+        // Both need a hex_code: with no colour on file the mix cannot be
+        // previewed and the customer would be choosing blind. This is a
+        // convenience filter only — MixController re-checks every rule,
+        // because a request can name any variant id it likes. The pint
+        // pattern is shared with ProductVariant::$is_pint through config, so
+        // the list offered cannot drift from what the endpoint will accept.
+        if ($mixable = (string) $request->query('mixable', '')) {
+            $query->whereHas('variants', function ($v) use ($mixable) {
+                $v->where('is_archived', false)
+                    ->whereNotNull('hex_code')
+                    ->where('stock', '>', 0);
+
+                if ($mixable !== 'base') {
+                    $v->whereRaw('size_volume regexp ?', [config('paint.mix.pint_pattern')]);
+                }
+            });
         }
 
         // Price filters match if ANY active size falls in the range
@@ -83,6 +108,7 @@ class ProductController extends Controller
         // activeVariants carries the colour/size grid the app's pickers read;
         // the appended `colors` aggregate is the distinct-shade list on top of it.
         $product->load(['brand', 'categories', 'activeVariants']);
+
         return response()->json($product);
     }
 
@@ -90,7 +116,7 @@ class ProductController extends Controller
     {
         // Catalog brand grid: only brands with something to sell right now,
         // counting purchasable products (not archived/sold-out ones)
-        $brands = \App\Models\Brand::where('is_archived', false)
+        $brands = Brand::where('is_archived', false)
             ->whereHas('products', fn ($q) => $q->purchasable())
             ->withCount(['products' => fn ($q) => $q->purchasable()])
             ->orderBy('brand_name')
@@ -101,7 +127,8 @@ class ProductController extends Controller
 
     public function categories()
     {
-        $categories = \App\Models\Category::where('is_archived', false)->withCount('products')->get();
+        $categories = Category::where('is_archived', false)->withCount('products')->get();
+
         return response()->json($categories);
     }
 
@@ -109,9 +136,9 @@ class ProductController extends Controller
      * Category filter chips for one brand's product list — each with the
      * count of that brand's purchasable products in the category.
      */
-    public function brandCategories(\App\Models\Brand $brand)
+    public function brandCategories(Brand $brand)
     {
-        $categories = \App\Models\Category::where('is_archived', false)
+        $categories = Category::where('is_archived', false)
             ->whereHas('products', fn ($q) => $q->purchasable()->where('brand_id', $brand->id))
             ->withCount(['products' => fn ($q) => $q->purchasable()->where('brand_id', $brand->id)])
             ->orderBy('category_name')

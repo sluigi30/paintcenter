@@ -2,6 +2,9 @@
 
 namespace App\Providers\Filament;
 
+use App\Http\Controllers\ReportExportController;
+use App\Http\Controllers\MessageAttachmentController;
+use App\Http\Controllers\ReportPrintController;
 use Filament\Http\Middleware\Authenticate;
 use Filament\Http\Middleware\DisableBladeIconComponents;
 use Filament\Http\Middleware\DispatchServingFilamentEvent;
@@ -15,6 +18,7 @@ use Illuminate\Foundation\Http\Middleware\VerifyCsrfToken;
 use Illuminate\Routing\Middleware\SubstituteBindings;
 use Illuminate\Session\Middleware\AuthenticateSession;
 use Illuminate\Session\Middleware\StartSession;
+use Illuminate\Support\Facades\Route;
 use Illuminate\View\Middleware\ShareErrorsFromSession;
 
 class AdminPanelProvider extends PanelProvider
@@ -62,6 +66,29 @@ class AdminPanelProvider extends PanelProvider
             ])
             ->authMiddleware([
                 Authenticate::class,
-            ]);
+            ])
+            /**
+             * The printable report is a plain document, not a Livewire page, so
+             * it cannot be a Filament Page - but it must sit behind exactly the
+             * same gate. Registered here rather than in routes/web.php so it
+             * inherits the panel's session middleware and its auth redirect; on
+             * the global `auth` middleware a logged-out admin got a 500 for an
+             * undefined `login` route, because the panel names its own.
+             */
+            ->authenticatedRoutes(function (): void {
+                Route::get('reports/print', ReportPrintController::class)
+                    ->name('reports.print');
+
+                Route::get('reports/export/{section}', ReportExportController::class)
+                    ->name('reports.export');
+
+                // Same controller the API serves attachments from, so the
+                // panel cannot end up with a softer rule than the app about
+                // who may open a customer's photo. Here for the same reason
+                // the print route is: it inherits the panel's session
+                // middleware and the panel's own login redirect.
+                Route::get('messages/attachments/{attachment}', MessageAttachmentController::class)
+                    ->name('messages.attachment');
+            });
     }
 }

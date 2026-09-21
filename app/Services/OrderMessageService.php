@@ -80,6 +80,10 @@ class OrderMessageService
             'sender_id'   => $admin->id,
             'receiver_id' => $order->user_id,
             'content'     => $content,
+            // Marks this as posted by the system rather than typed by whoever
+            // happens to be the active admin. The thread renders it as an
+            // order card instead of a bubble from a person who never wrote it.
+            'kind'        => Message::KIND_ORDER_UPDATE,
             'timestamp'   => now(),
             'is_read'     => false,
         ]);
