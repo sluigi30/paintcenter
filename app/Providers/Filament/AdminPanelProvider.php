@@ -2,6 +2,8 @@
 
 namespace App\Providers\Filament;
 
+use App\Filament\Auth\AcceptInvite;
+use App\Filament\Auth\EditProfile;
 use App\Http\Controllers\ReportExportController;
 use App\Http\Controllers\MessageAttachmentController;
 use App\Http\Controllers\ReportPrintController;
@@ -37,6 +39,11 @@ class AdminPanelProvider extends PanelProvider
             ])
             ->font('Inter')
             ->login()
+            ->passwordReset()
+            // isSimple: false renders the profile inside the panel shell rather
+            // than on a bare auth page, so changing a password does not feel
+            // like being logged out and sent somewhere else.
+            ->profile(EditProfile::class, isSimple: false)
             ->spa()
             ->databaseNotifications()
             ->databaseNotificationsPolling('30s')
@@ -66,6 +73,32 @@ class AdminPanelProvider extends PanelProvider
             ])
             ->authMiddleware([
                 Authenticate::class,
+            ])
+            /**
+             * GUEST routes. The invitation link is opened by someone who has
+             * never signed in and has no password yet, so it cannot live under
+             * authenticatedRoutes() the way the report and attachment routes
+             * do - that would redirect them straight to a login they cannot
+             * pass. Registered on the panel rather than in routes/web.php so it
+             * still gets the panel's session middleware and styling.
+             */
+            ->routes(function (): void {
+                Route::get('invite/{token}', AcceptInvite::class)
+                    ->name('invite.accept');
+            })
+            /**
+             * Routing to the class is only half of it. The first GET renders
+             * fine, but every interaction after that is a POST to
+             * /livewire/update which resolves the component by NAME, and a
+             * class reached through routes() is never registered under one -
+             * so submitting the form died with "Unable to find component:
+             * [app.filament.auth.accept-invite]". Filament registers its own
+             * auth pages this way; a page behind routes() has to say so itself.
+             * The name is derived by Livewire's own registry, so it cannot
+             * drift from the class.
+             */
+            ->livewireComponents([
+                AcceptInvite::class,
             ])
             /**
              * The printable report is a plain document, not a Livewire page, so

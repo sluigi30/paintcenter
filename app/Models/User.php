@@ -82,7 +82,17 @@ class User extends Authenticatable implements FilamentUser
      */
     public static function activeAdmin(): ?self
     {
-        return static::query()->admins()->where('is_archived', false)->orderBy('id')->first();
+        return static::query()
+            ->admins()
+            ->where('is_archived', false)
+            // An invited-but-unclaimed account is not a person yet. Letting one
+            // be picked here would have order updates arrive from an admin who
+            // has never signed in - and, because the inbox is built from
+            // existing messages, park those threads under an account nobody
+            // reads. Reachable in practice as soon as older admins are archived.
+            ->whereDoesntHave('adminInvite', fn ($q) => $q->unaccepted())
+            ->orderBy('id')
+            ->first();
     }
 
     public function isSuperAdmin(): bool
@@ -101,5 +111,42 @@ class User extends Authenticatable implements FilamentUser
     public function cartItems()
     {
         return $this->hasMany(CartItem::class);
+    }
+
+    /** The invitation that made this account usable, if it was created by one. */
+    public function adminInvite()
+    {
+        return $this->hasOne(AdminInvite::class);
+    }
+
+    /**
+     * Created, emailed an invitation, never claimed. The account exists and is
+     * not archived, but nobody has ever set a password on it or signed in.
+     */
+    public function hasPendingInvite(): bool
+    {
+        return $this->adminInvite !== null && ! $this->adminInvite->isAccepted();
+    }
+
+    /**
+     * Send a password-reset link ONLY to an admin who could actually use one.
+     *
+     * `users` holds customers too, so without this a customer's address typed
+     * into the panel's forgot-password form would be emailed an admin-panel
+     * reset link, and a deactivated admin could quietly walk their own password
+     * back. Silently doing nothing (rather than erroring) keeps the broker's
+     * response identical either way, so the form cannot be used to find out
+     * which addresses belong to admins.
+     *
+     * Customers have no recovery path at all yet - that is a known gap, noted
+     * in CLAUDE.md, and deliberately not solved here.
+     */
+    public function sendPasswordResetNotification(#[\SensitiveParameter] $token): void
+    {
+        if ($this->is_archived || ! ($this->isAdmin() || $this->isSuperAdmin())) {
+            return;
+        }
+
+        parent::sendPasswordResetNotification($token);
     }
 }
