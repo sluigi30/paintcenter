@@ -59,9 +59,24 @@ class User extends Authenticatable implements FilamentUser
     {
         return $this->hasMany(Message::class, 'receiver_id');
     }
+    /**
+     * Which panel this account may enter.
+     *
+     * Branches on the panel, not just the role, because there are two of them
+     * now and they are not ranked: a driver is not a weaker admin, so /driver
+     * is not a subset of /admin and neither role falls through to the other.
+     * An archived account enters nothing, whichever panel asks.
+     */
     public function canAccessPanel(Panel $panel): bool
     {
-        return ($this->isAdmin() || $this->isSuperAdmin()) && !$this->is_archived;
+        if ($this->is_archived) {
+            return false;
+        }
+
+        return match ($panel->getId()) {
+            'driver' => $this->isDriver(),
+            default  => $this->isAdmin() || $this->isSuperAdmin(),
+        };
     }
 
     /** Every admin-side account, archived ones included. */
@@ -73,6 +88,26 @@ class User extends Authenticatable implements FilamentUser
     public function scopeCustomers($query)
     {
         return $query->where('role', 'customer');
+    }
+
+    /**
+     * Delivery staff. Deliberately NOT part of the admins() scope — everything
+     * built on that scope (stock alerts, the new-order bell, activeAdmin()) is
+     * store-management work a driver has no part in, and quietly widening it
+     * would make a driver the sender of every automated order message.
+     */
+    public function scopeDrivers($query)
+    {
+        return $query->where('role', 'driver');
+    }
+
+    /** Active drivers, in the order they should be offered for assignment. */
+    public function scopeAssignableDrivers($query)
+    {
+        return $query->drivers()
+            ->where('is_archived', false)
+            ->whereDoesntHave('adminInvite', fn ($q) => $q->unaccepted())
+            ->orderBy('first_name');
     }
 
     /**
@@ -103,6 +138,17 @@ class User extends Authenticatable implements FilamentUser
     public function isAdmin(): bool
     {
         return $this->role === 'admin';
+    }
+
+    public function isDriver(): bool
+    {
+        return $this->role === 'driver';
+    }
+
+    /** Anyone who works here, as opposed to anyone who buys from here. */
+    public function isStaff(): bool
+    {
+        return $this->isSuperAdmin() || $this->isAdmin() || $this->isDriver();
     }
     public function getNameAttribute(): string
     {
@@ -140,10 +186,14 @@ class User extends Authenticatable implements FilamentUser
      *
      * Customers have no recovery path at all yet - that is a known gap, noted
      * in CLAUDE.md, and deliberately not solved here.
+     *
+     * Drivers DO get one. They are staff with a panel login, and the silent
+     * return this method is built on means a driver left out of the check would
+     * request a reset, be told nothing was wrong, and never receive anything.
      */
     public function sendPasswordResetNotification(#[\SensitiveParameter] $token): void
     {
-        if ($this->is_archived || ! ($this->isAdmin() || $this->isSuperAdmin())) {
+        if ($this->is_archived || ! $this->isStaff()) {
             return;
         }
 

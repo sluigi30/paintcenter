@@ -7,8 +7,8 @@ use App\Filament\Resources\UserResource;
 use App\Filament\Resources\UserResource\Pages\CreateUser;
 use App\Models\AdminInvite;
 use App\Models\User;
-use App\Notifications\AdminAccountInvited;
-use App\Services\AdminInviteService;
+use App\Notifications\StaffAccountInvited;
+use App\Services\StaffInviteService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Notification;
@@ -83,7 +83,7 @@ class AdminInviteTest extends TestCase
         $this->assertSame('admin', $created->role);
         $this->assertTrue($created->hasPendingInvite());
 
-        Notification::assertSentTo($created, AdminAccountInvited::class);
+        Notification::assertSentTo($created, StaffAccountInvited::class);
 
         // Whatever sits in the column, it is not something anyone chose or knows.
         $this->assertFalse(Hash::check('password', $created->password));
@@ -95,9 +95,9 @@ class AdminInviteTest extends TestCase
         Notification::fake();
 
         $user     = $this->admin();
-        $delivery = AdminInviteService::send($user);
+        $delivery = StaffInviteService::send($user);
 
-        Notification::assertSentTo($user, AdminAccountInvited::class, function ($notification) use ($user, $delivery) {
+        Notification::assertSentTo($user, StaffAccountInvited::class, function ($notification) use ($user, $delivery) {
             $mail = $notification->toMail($user);
 
             $rendered = collect($mail->introLines)
@@ -162,7 +162,7 @@ class AdminInviteTest extends TestCase
         $this->breakTheMailer();
 
         $user     = $this->admin();
-        $delivery = AdminInviteService::send($user);
+        $delivery = StaffInviteService::send($user);
 
         $this->assertFalse($delivery->reachedSomeone());
         $this->assertTrue($delivery->mailConfigured);
@@ -187,7 +187,7 @@ class AdminInviteTest extends TestCase
         config(['mail.default' => 'log']);
 
         $user     = $this->admin();
-        $delivery = AdminInviteService::send($user);
+        $delivery = StaffInviteService::send($user);
 
         $this->assertFalse($delivery->reachedSomeone());
         $this->assertFalse($delivery->mailConfigured);
@@ -203,7 +203,7 @@ class AdminInviteTest extends TestCase
     {
         // phpunit.xml runs the array mailer: a real transport that accepts.
         $user     = $this->admin();
-        $delivery = AdminInviteService::send($user);
+        $delivery = StaffInviteService::send($user);
 
         $this->assertTrue($delivery->reachedSomeone());
 
@@ -222,7 +222,7 @@ class AdminInviteTest extends TestCase
     public function test_an_invited_admin_sets_their_own_password_and_is_signed_in(): void
     {
         $user  = $this->admin();
-        $token = AdminInviteService::issue($user);
+        $token = StaffInviteService::issue($user);
 
         Livewire::test(AcceptInvite::class, ['token' => $token])
             ->fillForm([
@@ -243,11 +243,11 @@ class AdminInviteTest extends TestCase
     public function test_a_token_cannot_be_used_twice(): void
     {
         $user  = $this->admin();
-        $token = AdminInviteService::issue($user);
+        $token = StaffInviteService::issue($user);
 
-        AdminInviteService::accept(AdminInviteService::findPending($token), 'First-Passw0rd!');
+        StaffInviteService::accept(StaffInviteService::findPending($token), 'First-Passw0rd!');
 
-        $this->assertNull(AdminInviteService::findPending($token));
+        $this->assertNull(StaffInviteService::findPending($token));
 
         Livewire::test(AcceptInvite::class, ['token' => $token])
             ->assertSet('invalid', true);
@@ -259,13 +259,13 @@ class AdminInviteTest extends TestCase
     public function test_an_expired_token_is_refused(): void
     {
         $user  = $this->admin();
-        $token = AdminInviteService::issue($user);
+        $token = StaffInviteService::issue($user);
 
         $user->adminInvite->update([
-            'expires_at' => now()->subHours(AdminInviteService::EXPIRY_HOURS + 1),
+            'expires_at' => now()->subHours(StaffInviteService::EXPIRY_HOURS + 1),
         ]);
 
-        $this->assertNull(AdminInviteService::findPending($token));
+        $this->assertNull(StaffInviteService::findPending($token));
 
         Livewire::test(AcceptInvite::class, ['token' => $token])
             ->assertSet('invalid', true);
@@ -274,7 +274,7 @@ class AdminInviteTest extends TestCase
     public function test_an_invite_for_a_deactivated_account_is_refused(): void
     {
         $user  = $this->admin();
-        $token = AdminInviteService::issue($user);
+        $token = StaffInviteService::issue($user);
 
         $user->update(['is_archived' => true]);
 
@@ -289,12 +289,12 @@ class AdminInviteTest extends TestCase
         Notification::fake();
 
         $user  = $this->admin();
-        $first = AdminInviteService::issue($user);
+        $first = StaffInviteService::issue($user);
 
-        $second = AdminInviteService::send($user);
+        $second = StaffInviteService::send($user);
 
-        $this->assertNull(AdminInviteService::findPending($first));
-        $this->assertNotNull(AdminInviteService::findPending(
+        $this->assertNull(StaffInviteService::findPending($first));
+        $this->assertNotNull(StaffInviteService::findPending(
             str($second->url)->afterLast('/')->toString()
         ));
 
@@ -310,12 +310,12 @@ class AdminInviteTest extends TestCase
         $old->update(['is_archived' => true]);
 
         $invited = $this->admin('invited@example.test');
-        AdminInviteService::issue($invited);
+        StaffInviteService::issue($invited);
 
         $this->assertNull(User::activeAdmin());
 
         // Once claimed it is a real admin and may speak for the store.
-        AdminInviteService::accept($invited->adminInvite, 'Str0ng-Passw0rd!');
+        StaffInviteService::accept($invited->adminInvite, 'Str0ng-Passw0rd!');
 
         $this->assertTrue(User::activeAdmin()?->is($invited));
     }
@@ -359,7 +359,7 @@ class AdminInviteTest extends TestCase
     {
         $guest = [
             '/admin/password-reset/request',
-            '/admin/invite/' . AdminInviteService::issue($this->admin('invitee@example.test')),
+            '/admin/invite/' . StaffInviteService::issue($this->admin('invitee@example.test')),
         ];
 
         foreach ($guest as $url) {
@@ -444,7 +444,7 @@ class AdminInviteTest extends TestCase
     public function test_setting_a_password_manually_also_claims_the_account(): void
     {
         $user = $this->admin();
-        AdminInviteService::issue($user);
+        StaffInviteService::issue($user);
 
         $this->assertTrue($user->hasPendingInvite());
 

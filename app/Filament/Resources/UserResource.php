@@ -4,7 +4,7 @@ namespace App\Filament\Resources;
 
 use App\Filament\Resources\UserResource\Pages;
 use App\Models\User;
-use App\Services\AdminInviteService;
+use App\Services\StaffInviteService;
 use App\Services\InviteDelivery;
 use Filament\Actions\Action;
 use Filament\Notifications\Notification;
@@ -72,7 +72,7 @@ class UserResource extends Resource
                 ->label('Password')
                 ->content(fn (string $operation) => $operation === 'create'
                     ? 'No password is set here. Saving emails this person a link to choose their own, valid for '
-                        . AdminInviteService::EXPIRY_HOURS . ' hours.'
+                        . StaffInviteService::EXPIRY_HOURS . ' hours.'
                     : 'Only this admin can change their own password. Use "Resend invite" or "Set password manually" if they are locked out.'),
         ]);
     }
@@ -153,7 +153,7 @@ class UserResource extends Resource
                     ->action(function (User $record) {
                         static::inviteNotification(
                             $record,
-                            AdminInviteService::send($record, auth()->id()),
+                            StaffInviteService::send($record, auth()->id()),
                             'Invitation resent',
                         )->send();
                     }),
@@ -231,7 +231,7 @@ class UserResource extends Resource
      */
     public static function inviteNotification(User $user, InviteDelivery $delivery, string $title): Notification
     {
-        $expiry = AdminInviteService::EXPIRY_HOURS;
+        $expiry = StaffInviteService::EXPIRY_HOURS;
 
         if ($delivery->reachedSomeone()) {
             return Notification::make()

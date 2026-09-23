@@ -123,10 +123,13 @@ class ActivityLogResource extends Resource
                         'inventory' => 'Inventory',
                         'login'     => 'Signed in',
                     ]),
+                // "Staff", not "Admin": drivers write to this feed too, and a
+                // filter that cannot name them would hide the entries most
+                // worth looking up — who took an order out and who delivered it.
                 SelectFilter::make('user_id')
-                    ->label('Admin')
+                    ->label('Staff')
                     ->options(fn () => User::query()
-                        ->whereIn('role', ['admin', 'super_admin'])
+                        ->whereIn('role', ['admin', 'super_admin', 'driver'])
                         ->get()
                         ->pluck('name', 'id')
                         ->toArray())

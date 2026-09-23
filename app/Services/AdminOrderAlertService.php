@@ -44,13 +44,55 @@ class AdminOrderAlertService
                     // Cloud domain, never at whatever address the admin has
                     // the panel open on. A root-relative path resolves against
                     // the admin's own browser instead.
-                    ->url(OrderResource::getUrl('edit', ['record' => $order], isAbsolute: false))
+                    //
+                    // The panel is PINNED for a related reason: Resource::getUrl()
+                    // resolves against whatever panel the CURRENT request is in,
+                    // and these notifications are raised from outside the admin
+                    // panel — the API, and (for deliveryExhausted) the driver
+                    // panel. Left unpinned it asks for
+                    // filament.driver.resources.orders.edit, which does not exist,
+                    // and the driver's action dies with a 500.
+                    ->url(OrderResource::getUrl('edit', ['record' => $order], isAbsolute: false, panel: 'admin'))
                     ->markAsRead(),
             ]);
 
         // notifyNow, not sendToDatabase — the latter queues, and an alert that
         // waits on a worker nobody is running is not an alert. Same reasoning
         // as the stock alerts in ProductVariantObserver.
+        foreach (User::admins()->where('is_archived', false)->get() as $admin) {
+            $admin->notifyNow($notification->toDatabase());
+        }
+    }
+
+    /**
+     * A delivery that has run out of attempts.
+     *
+     * The driver's Couldn't Deliver button is withdrawn at the cap, so from
+     * here the order can only move if an admin acts — cancel it through
+     * OrderCancellationService (stock returns, the customer is told why) or
+     * reassign it. Without this alert it would sit `shipped` indefinitely: off
+     * every admin work list, because `shipped` reads as "out on the van".
+     */
+    public static function deliveryExhausted(Order $order, string $reason): void
+    {
+        $notification = Notification::make()
+            ->title('Delivery failed — needs a decision')
+            ->icon('heroicon-o-exclamation-triangle')
+            ->warning()
+            ->body(sprintf(
+                '<strong>%s</strong> could not be delivered after %d attempts. Last reason: %s. Cancel it or assign another driver.',
+                e($order->created_at->format('M j, Y \a\t g:i A')),
+                (int) $order->failed_attempts,
+                e($reason),
+            ))
+            ->actions([
+                Action::make('view')
+                    ->label('View order')
+                    ->button()
+                    ->url(OrderResource::getUrl('edit', ['record' => $order], isAbsolute: false, panel: 'admin'))
+                    ->markAsRead(),
+            ]);
+
         foreach (User::admins()->where('is_archived', false)->get() as $admin) {
             $admin->notifyNow($notification->toDatabase());
         }

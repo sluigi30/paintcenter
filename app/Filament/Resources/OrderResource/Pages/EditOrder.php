@@ -26,6 +26,7 @@ class EditOrder extends EditRecord
     protected function getHeaderActions(): array
     {
         return [
+            OrderResource::assignDriverAction(),
             OrderResource::advanceStatusAction(),
             OrderResource::revertStatusAction(),
         ];

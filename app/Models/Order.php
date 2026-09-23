@@ -29,13 +29,26 @@ class Order extends Model
         'cancellation_reason',
         'cancelled_by',
         'cancelled_at',
+        'driver_id',
+        'assigned_by',
+        'assigned_at',
+        'picked_up_at',
+        'delivered_at',
+        'delivery_note',
+        'failed_attempts',
+        'cash_collected_at',
     ];
 
     protected function casts(): array
     {
         return [
-            'order_date'   => 'datetime',
-            'cancelled_at' => 'datetime',
+            'order_date'        => 'datetime',
+            'cancelled_at'      => 'datetime',
+            'assigned_at'       => 'datetime',
+            'picked_up_at'      => 'datetime',
+            'delivered_at'      => 'datetime',
+            'cash_collected_at' => 'datetime',
+            'failed_attempts'   => 'integer',
         ];
     }
 
@@ -199,6 +212,48 @@ class Order extends Model
     public function cancelledBy()
     {
         return $this->belongsTo(User::class, 'cancelled_by');
+    }
+
+    /** Who is carrying this delivery right now. Null until an admin assigns. */
+    public function driver()
+    {
+        return $this->belongsTo(User::class, 'driver_id');
+    }
+
+    public function assignedBy()
+    {
+        return $this->belongsTo(User::class, 'assigned_by');
+    }
+
+    /**
+     * Can a driver be put on this order at all?
+     *
+     * Pickups are handed over at the counter and never assigned. A cancelled or
+     * completed order has nowhere left to go, and assigning one would put a
+     * finished job back on somebody's list.
+     */
+    public function isAssignable(): bool
+    {
+        return $this->order_type === 'delivery'
+            && in_array($this->status, ['pending', 'processing', 'shipped'], true);
+    }
+
+    /**
+     * The driver has the goods and has not yet handed them over.
+     *
+     * Read off picked_up_at rather than the status, because an admin using the
+     * override path can move an order to `shipped` without any driver ever
+     * having touched it.
+     */
+    public function isOutForDelivery(): bool
+    {
+        return $this->picked_up_at !== null && $this->delivered_at === null;
+    }
+
+    /** Cash on delivery — the one payment method a driver has to collect. */
+    public function isCashOnDelivery(): bool
+    {
+        return $this->payment?->payment_method === 'cod';
     }
 
     public function orderItems()

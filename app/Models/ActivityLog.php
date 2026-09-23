@@ -50,10 +50,15 @@ class ActivityLog extends Model
     // -------------------------------------------------------
 
     /**
-     * Record an activity — but only when an admin or super admin is
-     * the one acting. Customer API traffic and console/seeder writes
-     * (no authenticated admin) are intentionally ignored, keeping the
-     * feed a clean picture of staff activity.
+     * Record an activity — but only when a member of STAFF is the one
+     * acting. Customer API traffic and console/seeder writes (nobody
+     * authenticated) are intentionally ignored, keeping the feed a clean
+     * picture of staff activity.
+     *
+     * Drivers count as staff here. They were not, at first, and that was
+     * backwards: a driver marking an order picked up or delivered is exactly
+     * the kind of act the store needs attributable, and the admin-only gate
+     * meant every one of them was recorded nowhere.
      */
     public static function log(
         string $event,
@@ -61,14 +66,14 @@ class ActivityLog extends Model
         ?string $description = null,
         array $properties = []
     ): ?self {
-        $admin = auth()->user();
+        $actor = auth()->user();
 
-        if (! $admin || ! ($admin->isAdmin() || $admin->isSuperAdmin())) {
+        if (! $actor || ! $actor->isStaff()) {
             return null;
         }
 
         return static::create([
-            'user_id'       => $admin->id,
+            'user_id'       => $actor->id,
             'event'         => $event,
             'subject_type'  => $subject ? $subject::class : null,
             'subject_id'    => $subject?->getKey(),

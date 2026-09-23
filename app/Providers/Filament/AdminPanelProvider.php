@@ -4,6 +4,7 @@ namespace App\Providers\Filament;
 
 use App\Filament\Auth\AcceptInvite;
 use App\Filament\Auth\EditProfile;
+use App\Filament\Auth\Login;
 use App\Http\Controllers\ReportExportController;
 use App\Http\Controllers\MessageAttachmentController;
 use App\Http\Controllers\ReportPrintController;
@@ -38,7 +39,9 @@ class AdminPanelProvider extends PanelProvider
                 'danger' => Color::Rose, // keep destructive actions distinguishable from the red primary
             ])
             ->font('Inter')
-            ->login()
+            // Custom only in that it stops reporting a CORRECT password as wrong
+            // when the person is simply at the other panel's door.
+            ->login(Login::class)
             ->passwordReset()
             // isSimple: false renders the profile inside the panel shell rather
             // than on a bare auth page, so changing a password does not feel

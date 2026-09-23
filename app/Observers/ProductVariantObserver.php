@@ -119,9 +119,16 @@ class ProductVariantObserver
                 // Relative: this fires on stock deductions made by customer
                 // checkouts, so an absolute URL would carry the mobile app's
                 // host into the admin's browser.
+                //
+                // Panel pinned for the same reason it is in
+                // AdminOrderAlertService: getUrl() resolves against the CURRENT
+                // request's panel, and this observer fires wherever stock moves
+                // — the API today, and any future panel that returns stock to
+                // the shelf. An unpinned URL would ask for a route that panel
+                // does not have and 500 the action that triggered it.
                 ->url(InventoryResource::getUrl('index', [
                     'search' => $variant->product?->name,
-                ], isAbsolute: false))
+                ], isAbsolute: false, panel: 'admin'))
                 ->markAsRead(),
         ];
     }

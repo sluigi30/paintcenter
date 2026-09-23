@@ -5,7 +5,10 @@ namespace App\Filament\Resources;
 use App\Filament\Resources\OrderResource\Pages;
 use App\Models\Order;
 use App\Models\OrderItem;
+use App\Models\User;
+use App\Services\DeliveryService;
 use App\Services\OrderCancellationService;
+use App\Services\OrderStatusService;
 use Filament\Actions\Action;
 use Filament\Actions\EditAction;
 use Filament\Forms\Components\DatePicker;
@@ -99,6 +102,14 @@ class OrderResource extends Resource
                 ->label('Shipping Address')
                 ->disabled()
                 ->columnSpanFull(),
+
+            // Who has this delivery, and how it is going. Only on deliveries —
+            // a pickup is never assigned, and an empty "Driver: —" on every
+            // pickup is a field that trains people to stop reading it.
+            Placeholder::make('driver_display')
+                ->label('Driver')
+                ->visible(fn (?Order $record) => $record?->order_type === 'delivery')
+                ->content(fn (?Order $record) => $record ? static::driverSummary($record) : '—'),
 
             Textarea::make('cancellation_reason')
                 ->label('Cancellation Reason')
@@ -384,6 +395,7 @@ class OrderResource extends Resource
             ->actions([
                 EditAction::make(),
 
+                static::assignDriverAction(),
                 static::advanceStatusAction(),
                 static::revertStatusAction(),
 
@@ -430,6 +442,69 @@ class OrderResource extends Resource
     }
 
     /**
+     * Put a driver on a delivery, or move it to a different one.
+     *
+     * Only offered on deliveries: a pickup is handed over at the counter and is
+     * never assigned. Each driver's current load is shown in the option itself
+     * — it is a count(), not an availability state machine, and it answers the
+     * only question an admin actually asks at this moment ("who is free?")
+     * without building logistics software to do it.
+     */
+    public static function assignDriverAction(): Action
+    {
+        return Action::make('assignDriver')
+            ->label(fn (Order $record) => $record->driver_id ? 'Reassign' : 'Assign Driver')
+            ->icon('heroicon-o-truck')
+            ->color('gray')
+            ->visible(fn (Order $record) => $record->isAssignable())
+            ->modalHeading(fn (Order $record) => $record->driver_id ? 'Move this delivery' : 'Assign a driver')
+            ->modalSubmitActionLabel('Assign')
+            ->schema([
+                Select::make('driver_id')
+                    ->label('Driver')
+                    ->options(fn () => User::assignableDrivers()->get()
+                        ->mapWithKeys(fn (User $driver) => [
+                            $driver->id => $driver->name . ' — ' . static::driverLoad($driver) . ' active',
+                        ])
+                        ->all())
+                    ->searchable()
+                    ->required()
+                    ->helperText('Only active drivers who have accepted their invite are listed.'),
+            ])
+            ->action(function (Order $record, array $data) {
+                $driver = User::find($data['driver_id']);
+
+                if (! $driver) {
+                    Notification::make()->title('That driver no longer exists')->danger()->send();
+
+                    return;
+                }
+
+                try {
+                    DeliveryService::assign($record, $driver, auth()->user());
+                } catch (\DomainException $e) {
+                    Notification::make()->title('Could not assign')->body($e->getMessage())->danger()->send();
+
+                    return;
+                }
+
+                Notification::make()
+                    ->title('Assigned to ' . $driver->name)
+                    ->body('They have been notified and it is now on their delivery list.')
+                    ->success()
+                    ->send();
+            });
+    }
+
+    /** How many deliveries this driver is already carrying or collecting. */
+    protected static function driverLoad(User $driver): int
+    {
+        return Order::where('driver_id', $driver->id)
+            ->whereIn('status', ['processing', 'shipped'])
+            ->count();
+    }
+
+    /**
      * Move the order one step along its own flow.
      *
      * One button rather than a dropdown: the work is linear, so the only
@@ -448,13 +523,12 @@ class OrderResource extends Resource
             ->modalHeading(fn (Order $record) => 'Move to '.Order::statusLabel($record->nextStatus()).'?')
             ->modalDescription('The customer is messaged as soon as this is saved.')
             ->action(function (Order $record) {
-                $next = $record->nextStatus();
+                // The move itself, its concurrency guard, and the customer
+                // announcement all live in OrderStatusService — the driver
+                // panel presses the same two transitions from its own screen.
+                $change = OrderStatusService::advance($record);
 
-                // Re-read rather than trusting the rendered button: the table
-                // polls every 30s and two admins can be looking at the same
-                // row. If someone moved it already, say so instead of pushing
-                // it a second step along.
-                if ($next === null || $record->fresh()->status !== $record->status) {
+                if (! $change->succeeded()) {
                     Notification::make()
                         ->title('Order already moved')
                         ->body('Someone else advanced this order. Refresh to see where it is.')
@@ -464,11 +538,8 @@ class OrderResource extends Resource
                     return;
                 }
 
-                // OrderObserver announces the change to the customer.
-                $record->update(['status' => $next]);
-
                 Notification::make()
-                    ->title('Order is now '.Order::statusLabel($next))
+                    ->title('Order is now '.$change->label())
                     ->body('The customer has been told.')
                     ->success()
                     ->send();
@@ -494,9 +565,9 @@ class OrderResource extends Resource
             ->modalHeading(fn (Order $record) => 'Move back to '.Order::statusLabel($record->previousStatus()).'?')
             ->modalDescription('For correcting a step taken by mistake. The customer is messaged about the change.')
             ->action(function (Order $record) {
-                $previous = $record->previousStatus();
+                $change = OrderStatusService::revert($record);
 
-                if ($previous === null || $record->fresh()->status !== $record->status) {
+                if (! $change->succeeded()) {
                     Notification::make()
                         ->title('Order already moved')
                         ->body('Someone else changed this order. Refresh to see where it is.')
@@ -506,13 +577,50 @@ class OrderResource extends Resource
                     return;
                 }
 
-                $record->update(['status' => $previous]);
-
                 Notification::make()
-                    ->title('Moved back to '.Order::statusLabel($previous))
+                    ->title('Moved back to '.$change->label())
                     ->success()
                     ->send();
             });
+    }
+
+    /**
+     * Who is carrying this delivery, and how it has gone so far.
+     *
+     * Failed attempts are shown here rather than buried in the activity log,
+     * because at the cap the order stops moving on its own and this screen is
+     * where an admin decides what happens to it.
+     */
+    protected static function driverSummary(Order $record): HtmlString
+    {
+        if (! $record->driver) {
+            return new HtmlString('<span style="opacity:.7">Not assigned</span>');
+        }
+
+        $lines = ['<strong>' . e($record->driver->name) . '</strong>'];
+
+        if ($record->assigned_at) {
+            $lines[] = '<span style="opacity:.7">Assigned ' . e($record->assigned_at->format('M j, Y \a\t g:i A')) . '</span>';
+        }
+
+        if ($record->picked_up_at) {
+            $lines[] = '<span style="opacity:.7">Picked up ' . e($record->picked_up_at->format('M j, g:i A')) . '</span>';
+        }
+
+        if ($record->delivered_at) {
+            $lines[] = '<span style="opacity:.7">Delivered ' . e($record->delivered_at->format('M j, g:i A')) . '</span>';
+        }
+
+        if ($record->failed_attempts > 0) {
+            $exhausted = DeliveryService::attemptsExhausted($record);
+            $note      = $record->delivery_note ? ' — ' . e($record->delivery_note) : '';
+
+            $lines[] = '<span style="color:#b91c1c;font-weight:600">'
+                . $record->failed_attempts . ' of ' . DeliveryService::MAX_ATTEMPTS . ' attempts failed'
+                . ($exhausted ? ' (no more will be made)' : '') . '</span>' . $note;
+        }
+
+        return new HtmlString(implode('<br>', $lines));
     }
 
     /** Where the order is, and what it is waiting for, on the edit page. */

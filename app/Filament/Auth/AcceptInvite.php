@@ -3,7 +3,8 @@
 namespace App\Filament\Auth;
 
 use App\Models\AdminInvite;
-use App\Services\AdminInviteService;
+use App\Models\User;
+use App\Services\StaffInviteService;
 use DanHarrin\LivewireRateLimiting\Exceptions\TooManyRequestsException;
 use DanHarrin\LivewireRateLimiting\WithRateLimiting;
 use Filament\Actions\Action;
@@ -64,7 +65,7 @@ class AcceptInvite extends SimplePage
 
         $this->token = $token;
 
-        $invite = AdminInviteService::findPending($token);
+        $invite = StaffInviteService::findPending($token);
 
         // An invite for an account that has been deactivated since it was sent
         // is dead. Without this the person sets a password, is bounced by
@@ -102,7 +103,7 @@ class AcceptInvite extends SimplePage
         // Re-resolved rather than trusted from mount(): the page may have sat
         // open for hours, and the invite can have been resent (new token) or
         // the account deactivated in the meantime.
-        $invite = AdminInviteService::findPending($this->token);
+        $invite = StaffInviteService::findPending($this->token);
 
         if (! $invite || $invite->user === null || $invite->user->is_archived) {
             $this->invalid = true;
@@ -115,7 +116,7 @@ class AcceptInvite extends SimplePage
             return null;
         }
 
-        $user = AdminInviteService::accept($invite, $data['password']);
+        $user = StaffInviteService::accept($invite, $data['password']);
 
         Filament::auth()->login($user);
         session()->regenerate();
@@ -126,7 +127,25 @@ class AcceptInvite extends SimplePage
             ->success()
             ->send();
 
-        return redirect()->intended(Filament::getUrl());
+        // NOT Filament::getUrl(). This page is registered on the admin panel's
+        // guest routes, so that resolves to /admin for everyone who lands here
+        // — including a driver, who would be signed in successfully and then
+        // bounced straight back out by canAccessPanel(). Send each person to
+        // the panel their role can actually enter.
+        //
+        // intended() is dropped for the same reason: whatever they were trying
+        // to reach before setting a password was, by definition, a page they
+        // were not signed in for, and for a driver it is very likely a page in
+        // a panel they will never be allowed into.
+        return redirect(static::homeFor($user));
+    }
+
+    /** The panel this account belongs in, once it exists. */
+    protected static function homeFor(User $user): string
+    {
+        return $user->isDriver()
+            ? Filament::getPanel('driver')->getUrl()
+            : Filament::getPanel('admin')->getUrl();
     }
 
     public function form(Schema $schema): Schema

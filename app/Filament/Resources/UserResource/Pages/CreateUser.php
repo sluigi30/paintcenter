@@ -3,7 +3,7 @@
 namespace App\Filament\Resources\UserResource\Pages;
 
 use App\Filament\Resources\UserResource;
-use App\Services\AdminInviteService;
+use App\Services\StaffInviteService;
 use App\Services\InviteDelivery;
 use Filament\Notifications\Notification;
 use Filament\Resources\Pages\CreateRecord;
@@ -31,7 +31,7 @@ class CreateUser extends CreateRecord
 
     protected function afterCreate(): void
     {
-        $this->delivery = AdminInviteService::send($this->record, auth()->id());
+        $this->delivery = StaffInviteService::send($this->record, auth()->id());
     }
 
     /**

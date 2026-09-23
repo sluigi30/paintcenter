@@ -4,16 +4,21 @@ namespace App\Services;
 
 use App\Models\AdminInvite;
 use App\Models\User;
-use App\Notifications\AdminAccountInvited;
+use App\Notifications\StaffAccountInvited;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
 
 /**
- * The one path by which an admin account becomes usable.
+ * The one path by which a STAFF account becomes usable — admin or driver.
  *
- * A created admin has NO password anyone knows — not even the super admin who
- * created it. `issue()` mints a single-use link, the invited person sets their
+ * It was admin-only at first, and the mechanism never cared: the token, the
+ * expiry and the claim are identical whoever is being invited. Only the
+ * resulting role and the panel they land on differ, so the name is the only
+ * thing that had to change.
+ *
+ * A created staff account has NO password anyone knows — not even the super
+ * admin who created it. `issue()` mints a single-use link, the invited person sets their
  * own password through it, and `accept()` is the only thing that stamps the
  * account as claimed. That is deliberate: a password typed by one person and
  * emailed to another is a permanent plaintext copy sitting in an inbox, and it
@@ -22,7 +27,7 @@ use Illuminate\Support\Str;
  *
  * The email carries a LINK, never a password.
  */
-class AdminInviteService
+class StaffInviteService
 {
     /**
      * How long a link stays good. Long, on purpose: an invite lands while
@@ -82,7 +87,7 @@ class AdminInviteService
         $url = self::url(self::issue($user, $invitedById));
 
         try {
-            $user->notify(new AdminAccountInvited($url));
+            $user->notify(new StaffAccountInvited($url));
         } catch (\Throwable $e) {
             Log::warning('Admin invite email failed to send', [
                 'user_id' => $user->id,

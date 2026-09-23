@@ -66,6 +66,35 @@ class OrderMessageService
         }
     }
 
+    /**
+     * A delivery that was attempted and could not be handed over.
+     *
+     * Announced here rather than through statusChanged() because nothing about
+     * the ORDER changed — it is still `shipped`, still out with the driver.
+     * That is exactly why the customer has to be told: their tracker will go on
+     * saying "on its way" and silence would read as a van that never came.
+     *
+     * The final attempt is worded differently. At the cap nobody is coming back
+     * tomorrow — an admin has to decide — and promising another try would be a
+     * promise the system has just stopped being able to keep.
+     */
+    public static function deliveryAttemptFailed(Order $order, string $reason, int $attempt, int $max): void
+    {
+        $ref = 'Your order from ' . self::placedAt($order);
+
+        $lines = ["We tried to deliver {$ref} but couldn't complete it."];
+
+        if ($trimmed = trim($reason)) {
+            $lines[] = "Reason: {$trimmed}";
+        }
+
+        $lines[] = $attempt >= $max
+            ? "We've tried {$max} times now, so we've stopped and someone from the store will contact you to sort it out. Reply here any time."
+            : 'We\'ll try again. Reply here if you\'d like to change the address or arrange a better time.';
+
+        self::post($order, implode("\n", $lines));
+    }
+
     /** Create the message from the store's account to the customer. */
     protected static function post(Order $order, string $content): void
     {
