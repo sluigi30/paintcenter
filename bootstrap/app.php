@@ -28,6 +28,12 @@ return Application::configure(basePath: dirname(__DIR__))
         $middleware->redirectGuestsTo(fn ($request) => $request->is('api/*')
             ? null
             : route('filament.admin.auth.login'));
+
+        // Gates /api/driver. Aliased rather than applied globally so the
+        // customer endpoints are untouched by it.
+        $middleware->alias([
+            'driver' => \App\Http\Middleware\EnsureUserIsDriver::class,
+        ]);
     })
     ->withExceptions(function (Exceptions $exceptions) {
         /*

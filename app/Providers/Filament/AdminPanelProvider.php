@@ -6,6 +6,7 @@ use App\Filament\Auth\AcceptInvite;
 use App\Filament\Auth\EditProfile;
 use App\Filament\Auth\Login;
 use App\Http\Controllers\ReportExportController;
+use App\Http\Controllers\DeliveryProofController;
 use App\Http\Controllers\MessageAttachmentController;
 use App\Http\Controllers\ReportPrintController;
 use Filament\Http\Middleware\Authenticate;
@@ -125,6 +126,12 @@ class AdminPanelProvider extends PanelProvider
                 // middleware and the panel's own login redirect.
                 Route::get('messages/attachments/{attachment}', MessageAttachmentController::class)
                     ->name('messages.attachment');
+
+                // Same controller the API serves proofs from, so the panel
+                // cannot end up with a softer rule than the app about who may
+                // open a photograph of a customer's front door.
+                Route::get('orders/{order}/proof', DeliveryProofController::class)
+                    ->name('orders.proof');
             });
     }
 }

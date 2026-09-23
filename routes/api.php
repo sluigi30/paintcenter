@@ -1,11 +1,13 @@
 <?php
 
 use App\Http\Controllers\Api\MessageController;
+use App\Http\Controllers\DeliveryProofController;
 use App\Http\Controllers\MessageAttachmentController;
 use App\Http\Controllers\Api\AuthController;
 use App\Http\Controllers\Api\BadgeController;
 use App\Http\Controllers\Api\CartController;
 use App\Http\Controllers\Api\ColorController;
+use App\Http\Controllers\Api\DriverDeliveryController;
 use App\Http\Controllers\Api\MixController;
 use App\Http\Controllers\Api\OrderController;
 use App\Http\Controllers\Api\ProductController;
@@ -64,10 +66,39 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::get('/',           [OrderController::class, 'index']);
         Route::post('/',          [OrderController::class, 'store']);
         Route::get('/{order}',    [OrderController::class, 'show']);
+
+        // The delivery photo. Gated in the controller — the customer whose
+        // order it is, any admin, or the driver who carried it; 404 otherwise.
+        // Named because Order::$proof_url builds the link from it.
+        Route::get('/{order}/proof', DeliveryProofController::class)
+            ->name('api.orders.proof');
         Route::post('/{order}/cancel', [OrderController::class, 'cancel']);
     });
 
     // Messages
+    /*
+     * Delivery driver endpoints.
+     *
+     * Behind `driver` as well as `auth:sanctum`: a valid token is not enough,
+     * the account has to be active delivery staff. Everything in here is a
+     * thin wrapper over DeliveryService, the same service the /driver Filament
+     * panel calls — so a driver app and the driver web panel can never drift
+     * on who owns an order, whether COD cash was collected, or what happens at
+     * the attempt cap. That is what Phase 1's extraction bought.
+     */
+    Route::middleware('driver')->prefix('driver')->group(function () {
+        Route::get('/deliveries',          [DriverDeliveryController::class, 'index']);
+        Route::get('/deliveries/summary',  [DriverDeliveryController::class, 'summaryCounts']);
+        Route::get('/failure-reasons',     [DriverDeliveryController::class, 'failureReasons']);
+
+        // AFTER /summary, or "summary" is swallowed as an order id.
+        Route::get('/deliveries/{order}',  [DriverDeliveryController::class, 'show']);
+
+        Route::post('/deliveries/{order}/pick-up', [DriverDeliveryController::class, 'pickUp']);
+        Route::post('/deliveries/{order}/deliver', [DriverDeliveryController::class, 'deliver']);
+        Route::post('/deliveries/{order}/fail',    [DriverDeliveryController::class, 'fail']);
+    });
+
     Route::prefix('messages')->group(function () {
         Route::get('/admin',           [MessageController::class, 'getAdmin']);
         Route::get('/conversations',   [MessageController::class, 'conversations']);

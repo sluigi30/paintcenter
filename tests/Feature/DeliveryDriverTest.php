@@ -9,12 +9,15 @@ use App\Models\Message;
 use App\Models\Order;
 use App\Models\Payment;
 use App\Models\User;
+use App\Services\DeliveryProofService;
 use App\Services\DeliveryService;
 use App\Services\OrderCancellationService;
 use DomainException;
 use Filament\Facades\Filament;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Http\UploadedFile;
+use Illuminate\Support\Facades\Storage;
 use Livewire\Livewire;
 use Tests\TestCase;
 
@@ -29,6 +32,21 @@ use Tests\TestCase;
 class DeliveryDriverTest extends TestCase
 {
     use RefreshDatabase;
+
+    protected function setUp(): void
+    {
+        parent::setUp();
+
+        // Proof photos would otherwise be written to the real disk, and these
+        // tests deliver a lot of orders.
+        Storage::fake(DeliveryProofService::disk());
+    }
+
+    /** Every handover needs one, so every test that delivers needs one. */
+    private function photo(): UploadedFile
+    {
+        return UploadedFile::fake()->image('handover.jpg', 800, 600);
+    }
 
     private function user(string $role, array $attributes = []): User
     {
@@ -410,7 +428,7 @@ class DeliveryDriverTest extends TestCase
         $this->assertSame('shipped', $order->fresh()->status);
         $this->assertNotNull($order->fresh()->picked_up_at);
 
-        $this->assertTrue(DeliveryService::deliver($order->fresh(), $driver)->succeeded());
+        $this->assertTrue(DeliveryService::deliver($order->fresh(), $driver, false, $this->photo())->succeeded());
         $this->assertSame('completed', $order->fresh()->status);
         $this->assertNotNull($order->fresh()->delivered_at);
     }
@@ -436,7 +454,7 @@ class DeliveryDriverTest extends TestCase
         $order  = $this->order($driver, 'shipped');
 
         $this->actingAs($driver);
-        DeliveryService::deliver($order, $driver);
+        DeliveryService::deliver($order, $driver, false, $this->photo());
 
         $this->assertTrue(
             ActivityLog::where('event', 'order.delivered')
@@ -457,7 +475,7 @@ class DeliveryDriverTest extends TestCase
         $this->actingAs($driver);
 
         try {
-            DeliveryService::deliver($order, $driver, cashCollected: false);
+            DeliveryService::deliver($order, $driver, cashCollected: false, proof: $this->photo());
             $this->fail('A COD delivery was completed without confirming collection.');
         } catch (DomainException) {
             // Nothing may have moved — not the status, not the payment.
@@ -472,7 +490,7 @@ class DeliveryDriverTest extends TestCase
         $order  = $this->order($driver, 'shipped', 'cod');
 
         $this->actingAs($driver);
-        DeliveryService::deliver($order, $driver, cashCollected: true);
+        DeliveryService::deliver($order, $driver, cashCollected: true, proof: $this->photo());
 
         $this->assertSame('completed', $order->fresh()->status);
         $this->assertSame('paid', $order->payment->fresh()->payment_status);
@@ -487,7 +505,7 @@ class DeliveryDriverTest extends TestCase
         $order  = $this->order($driver, 'shipped', 'gcash');
 
         $this->actingAs($driver);
-        DeliveryService::deliver($order, $driver);
+        DeliveryService::deliver($order, $driver, false, $this->photo());
 
         $this->assertSame('completed', $order->fresh()->status);
         // An online payment is not the driver's to collect or to change.

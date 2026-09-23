@@ -7,6 +7,7 @@ use App\Models\Order;
 use App\Models\User;
 use DomainException;
 use Filament\Notifications\Notification;
+use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\DB;
 
 /**
@@ -185,8 +186,12 @@ class DeliveryService
      * A customer who cannot pay is not this path — it is a failed attempt. COD
      * means cash on delivery: no cash, no handover, and the goods come back.
      */
-    public static function deliver(Order $order, User $driver, bool $cashCollected = false): StatusChange
-    {
+    public static function deliver(
+        Order $order,
+        User $driver,
+        bool $cashCollected = false,
+        ?UploadedFile $proof = null,
+    ): StatusChange {
         static::assertOwnedBy($order, $driver);
 
         if ($order->status !== 'shipped') {
@@ -199,32 +204,73 @@ class DeliveryService
             throw new DomainException('Confirm the cash was collected before marking this delivered.');
         }
 
-        $change = OrderStatusService::advance($order);
-
-        if (! $change->succeeded()) {
-            return $change;
+        // A photo is required of the DRIVER, on every handover. The escape
+        // hatch for a dead camera is deliberately not here: it is the admin's
+        // Advance override, which does not come through this service at all, so
+        // a store that can vouch for a delivery nobody photographed can still
+        // complete the order — and ActivityLog records which admin did it. A
+        // "skip" button here is one the drivers would simply learn to press.
+        if (! $proof) {
+            throw new DomainException('Take a photo of the delivery before marking it delivered.');
         }
 
-        DB::transaction(function () use ($order, $isCod) {
-            $order->update([
-                'delivered_at'      => now(),
-                'cash_collected_at' => $isCod ? now() : null,
-            ]);
+        // ORDER MATTERS, and not merely "before the transaction".
+        //
+        // The file is written first, then attached while the order is still
+        // `shipped`, and only THEN does the status move. Advancing first would
+        // fire OrderObserver — the customer's message and the SMS — and any
+        // failure after that leaves exactly the state this feature exists to
+        // prevent: an order marked completed, a customer already told, and no
+        // proof. Attaching first means the worst case is a `shipped` order
+        // carrying an unused photo: invisible, recoverable, and nothing false
+        // has been said to anybody.
+        $stored = DeliveryProofService::put($proof);
 
-            if ($isCod && $order->payment) {
-                $order->payment->update([
-                    'payment_status' => 'paid',
-                    'payment_date'   => now(),
+        try {
+            $order->update($stored);
+
+            $change = OrderStatusService::advance($order);
+
+            if (! $change->succeeded()) {
+                // Somebody else moved it. The photo describes a handover this
+                // call did not perform, so it does not belong on the row.
+                $order->update([
+                    'proof_disk'        => null,
+                    'proof_path'        => null,
+                    'proof_mime'        => null,
+                    'proof_size'        => null,
+                    'proof_captured_at' => null,
                 ]);
+                DeliveryProofService::discard($stored);
+
+                return $change;
             }
-        });
+
+            DB::transaction(function () use ($order, $isCod) {
+                $order->update([
+                    'delivered_at'      => now(),
+                    'cash_collected_at' => $isCod ? now() : null,
+                ]);
+
+                if ($isCod && $order->payment) {
+                    $order->payment->update([
+                        'payment_status' => 'paid',
+                        'payment_date'   => now(),
+                    ]);
+                }
+            });
+        } catch (\Throwable $e) {
+            DeliveryProofService::discard($stored);
+
+            throw $e;
+        }
 
         ActivityLog::log(
             'order.delivered',
             $order,
             $isCod
-                ? 'Delivered — cash collected ' . static::peso($order->total_amount)
-                : 'Delivered',
+                ? 'Delivered with photo — cash collected ' . static::peso($order->total_amount)
+                : 'Delivered with photo',
         );
 
         return $change;

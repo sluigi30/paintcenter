@@ -23,7 +23,9 @@ class OrderController extends Controller
 {
     public function index(Request $request)
     {
-        $orders = Order::with(['orderItems.product.brand', 'orderItems.variant', 'payment'])
+        // `driver` is eager-loaded for the appended driver_contact — without
+        // it the accessor fires a query per order on the list screen.
+        $orders = Order::with(['orderItems.product.brand', 'orderItems.variant', 'payment', 'driver'])
             ->where('user_id', $request->user()->id)
             ->orderBy('created_at', 'desc')
             ->get();
@@ -250,7 +252,7 @@ class OrderController extends Controller
             return response()->json(['message' => 'Unauthorized.'], 403);
         }
 
-        $order->load(['orderItems.product.brand', 'orderItems.variant', 'payment']);
+        $order->load(['orderItems.product.brand', 'orderItems.variant', 'payment', 'driver']);
 
         return response()->json($order);
     }

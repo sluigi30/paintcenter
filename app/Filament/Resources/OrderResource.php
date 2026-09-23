@@ -111,6 +111,36 @@ class OrderResource extends Resource
                 ->visible(fn (?Order $record) => $record?->order_type === 'delivery')
                 ->content(fn (?Order $record) => $record ? static::driverSummary($record) : '—'),
 
+            // The photo the driver took at handover. Rendered through the
+            // panel's gated route, never a storage URL — the disk is private
+            // and, on Cloud, a public one would not serve it at all.
+            Placeholder::make('delivery_proof')
+                ->label('Proof of delivery')
+                ->visible(fn (?Order $record) => $record?->hasProof())
+                ->columnSpanFull()
+                ->content(fn (Order $record) => new HtmlString(
+                    '<img src="' . e(route('filament.admin.orders.proof', ['order' => $record])) . '"'
+                    . ' alt="Proof of delivery" style="max-width:340px;width:100%;border-radius:.5rem;border:1px solid rgba(0,0,0,.1)">'
+                    . '<div style="opacity:.7;font-size:.8rem;margin-top:.4rem">Photographed '
+                    . e($record->proof_captured_at?->format('M j, Y \a\t g:i A') ?? '—')
+                    . ($record->driver ? ' by ' . e($record->driver->name) : '')
+                    . '</div>'
+                )),
+
+            // Recorded even after the file itself has been pruned, so an old
+            // order reads as "photographed, since deleted" rather than as a
+            // delivery nobody ever photographed.
+            Placeholder::make('proof_pruned')
+                ->label('Proof of delivery')
+                ->visible(fn (?Order $record) => $record && ! $record->hasProof() && $record->proof_captured_at)
+                ->content(fn (Order $record) => new HtmlString(
+                    '<span style="opacity:.7">Photographed '
+                    . e($record->proof_captured_at->format('M j, Y'))
+                    . '. The image has since been removed under the '
+                    . \App\Services\DeliveryProofService::RETENTION_MONTHS
+                    . '-month retention policy.</span>'
+                )),
+
             Textarea::make('cancellation_reason')
                 ->label('Cancellation Reason')
                 ->disabled()

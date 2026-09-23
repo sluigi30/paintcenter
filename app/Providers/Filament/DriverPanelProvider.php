@@ -3,6 +3,7 @@
 namespace App\Providers\Filament;
 
 use App\Filament\Auth\EditProfile;
+use App\Http\Controllers\DeliveryProofController;
 use App\Filament\Auth\Login;
 use Filament\Http\Middleware\Authenticate;
 use Filament\Http\Middleware\DisableBladeIconComponents;
@@ -16,6 +17,7 @@ use Illuminate\Foundation\Http\Middleware\VerifyCsrfToken;
 use Illuminate\Routing\Middleware\SubstituteBindings;
 use Illuminate\Session\Middleware\AuthenticateSession;
 use Illuminate\Session\Middleware\StartSession;
+use Illuminate\Support\Facades\Route;
 use Illuminate\View\Middleware\ShareErrorsFromSession;
 
 /**
@@ -78,6 +80,14 @@ class DriverPanelProvider extends PanelProvider
             ])
             ->authMiddleware([
                 Authenticate::class,
-            ]);
+            ])
+            // A driver keeps access to the photo they took, on their own
+            // deliveries only — the controller settles that. Registered here
+            // so it inherits this panel's session middleware and login
+            // redirect, the same reason the admin panel registers its copy.
+            ->authenticatedRoutes(function (): void {
+                Route::get('deliveries/{order}/proof', DeliveryProofController::class)
+                    ->name('deliveries.proof');
+            });
     }
 }

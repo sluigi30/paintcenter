@@ -8,7 +8,9 @@ use App\Services\DeliveryService;
 use DomainException;
 use Filament\Actions\Action;
 use Filament\Actions\ViewAction;
+use App\Services\DeliveryProofService;
 use Filament\Forms\Components\Checkbox;
+use Filament\Forms\Components\FileUpload;
 use Filament\Forms\Components\Select;
 use Filament\Forms\Components\Textarea;
 use Filament\Infolists\Components\TextEntry;
@@ -166,10 +168,32 @@ class DeliveryResource extends Resource
                             ? new HtmlString('<a href="tel:' . e(preg_replace('/\s+/', '', $state)) . '" style="font-weight:600;text-decoration:underline">' . e($state) . '</a>')
                             : null),
 
+                    // The address is the primary thing on screen; the map link
+                    // sits under it. There are no coordinates in this schema —
+                    // see DELIVERY_ROLE.md 4b — so this is a SEARCH handed to
+                    // whatever map the browser opens, and it is exactly as
+                    // accurate as the address is. A pin geocoded from
+                    // "Pilar, Bataan" would look precise and be kilometres
+                    // wrong, which a driver would trust.
                     TextEntry::make('shipping_address')
                         ->label('Deliver to')
                         ->placeholder('Address on file')
-                        ->columnSpanFull(),
+                        ->columnSpanFull()
+                        ->formatStateUsing(function ($state) {
+                            if (blank($state)) {
+                                return null;
+                            }
+
+                            $url = 'https://www.google.com/maps/search/?api=1&query='
+                                . urlencode(trim($state));
+
+                            return new HtmlString(
+                                e($state)
+                                . '<br><a href="' . e($url) . '" target="_blank" rel="noopener noreferrer"'
+                                . ' style="display:inline-flex;align-items:center;gap:.35rem;margin-top:.4rem;'
+                                . 'font-weight:700;color:#1d4ed8;text-decoration:underline">Navigate &rarr;</a>'
+                            );
+                        }),
                 ]),
 
             Section::make('What to hand over')
@@ -281,21 +305,48 @@ class DeliveryResource extends Resource
             ->visible(fn (Order $record) => $record->status === 'shipped')
             ->modalHeading('Mark as delivered')
             ->modalSubmitActionLabel('Mark as Delivered')
-            ->schema(fn (Order $record) => $record->isCashOnDelivery()
-                ? [
-                    // Required, and the server enforces it again in
-                    // DeliveryService::deliver(). Nothing else in the system
-                    // ever marks a COD payment paid, so an unconfirmed handover
-                    // leaves the store unable to say who holds the money.
-                    Checkbox::make('cash_collected')
-                        ->label('I collected ₱' . number_format((float) $record->total_amount, 2) . ' in cash')
-                        ->helperText("If the customer couldn't pay, use Couldn't Deliver instead — the items come back with you.")
-                        ->accepted()
+            ->schema(fn (Order $record) => array_merge(
+                $record->isCashOnDelivery()
+                    ? [
+                        // Required, and the server enforces it again in
+                        // DeliveryService::deliver(). Nothing else in the system
+                        // ever marks a COD payment paid, so an unconfirmed handover
+                        // leaves the store unable to say who holds the money.
+                        Checkbox::make('cash_collected')
+                            ->label('I collected ₱' . number_format((float) $record->total_amount, 2) . ' in cash')
+                            ->helperText("If the customer couldn't pay, use Couldn't Deliver instead — the items come back with you.")
+                            ->accepted()
+                            ->required(),
+                    ]
+                    : [],
+                [
+                    // The same requirement the app enforces, because both end
+                    // up in DeliveryService::deliver().
+                    //
+                    // storeFiles(false) is the important part: Filament would
+                    // otherwise write the file itself and hand back a PATH,
+                    // leaving two different pieces of code storing proofs in
+                    // two different ways. Off, the state is Livewire's
+                    // TemporaryUploadedFile — an Illuminate UploadedFile — so
+                    // DeliveryProofService does the writing for both clients,
+                    // on the disk it chooses, under the naming it chooses.
+                    FileUpload::make('proof')
+                        ->label('Photo of the delivery')
+                        ->helperText('Required. A photo of the handover — the items at the door, or with the customer.')
+                        ->image()
+                        ->storeFiles(false)
+                        ->acceptedFileTypes(['image/jpeg', 'image/png', 'image/webp'])
+                        ->maxSize(DeliveryProofService::MAX_FILE_KB)
                         ->required(),
-                ]
-                : [])
+                ],
+            ))
             ->action(fn (Order $record, array $data) => static::run(
-                fn () => DeliveryService::deliver($record, auth()->user(), (bool) ($data['cash_collected'] ?? false)),
+                fn () => DeliveryService::deliver(
+                    $record,
+                    auth()->user(),
+                    (bool) ($data['cash_collected'] ?? false),
+                    static::uploadedProof($data['proof'] ?? null),
+                ),
                 'Delivered',
                 'Thanks — the customer has been told the order is complete.',
             ));
@@ -350,6 +401,33 @@ class DeliveryResource extends Resource
                         ->send();
                 });
             });
+    }
+
+    /**
+     * Pull the UploadedFile out of a FileUpload's state.
+     *
+     * With storeFiles(false) the state is an array keyed by upload uuid, even
+     * for a single file, and its values are TemporaryUploadedFile instances.
+     * Anything else — a plain string path from a component someone later
+     * switches back to storing, or an empty array — yields null, and
+     * DeliveryService refuses the delivery rather than completing one with no
+     * photo attached.
+     */
+    protected static function uploadedProof(mixed $state): ?\Illuminate\Http\UploadedFile
+    {
+        if ($state instanceof \Illuminate\Http\UploadedFile) {
+            return $state;
+        }
+
+        if (is_array($state)) {
+            foreach ($state as $file) {
+                if ($file instanceof \Illuminate\Http\UploadedFile) {
+                    return $file;
+                }
+            }
+        }
+
+        return null;
     }
 
     /**

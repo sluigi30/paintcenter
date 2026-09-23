@@ -37,6 +37,14 @@ class Order extends Model
         'delivery_note',
         'failed_attempts',
         'cash_collected_at',
+        // Written as one array by DeliveryProofService::put(). Left out of
+        // $fillable they are dropped by mass assignment IN SILENCE — the
+        // delivery completes and the proof simply is not there.
+        'proof_disk',
+        'proof_path',
+        'proof_mime',
+        'proof_size',
+        'proof_captured_at',
     ];
 
     protected function casts(): array
@@ -48,6 +56,7 @@ class Order extends Model
             'picked_up_at'      => 'datetime',
             'delivered_at'      => 'datetime',
             'cash_collected_at' => 'datetime',
+            'proof_captured_at' => 'datetime',
             'failed_attempts'   => 'integer',
         ];
     }
@@ -57,7 +66,80 @@ class Order extends Model
      * It differs for custom orders, and a copy of that logic in the app would
      * drift from the server's — offering a Cancel button the API then refuses.
      */
-    protected $appends = ['has_custom_items', 'can_cancel'];
+    protected $appends = ['has_custom_items', 'can_cancel', 'driver_contact', 'proof_url'];
+
+    /** True while the photo taken at handover is still on disk. */
+    public function hasProof(): bool
+    {
+        return filled($this->proof_path);
+    }
+
+    /**
+     * Where the customer's app fetches the delivery photo.
+     *
+     * The app ROUTE, never a storage path — the gate lives in
+     * DeliveryProofController and a storage URL would route around it, as well
+     * as being unservable on Cloud. Null once the 12-month prune has removed
+     * the file, at which point `proof_captured_at` still records that a photo
+     * was taken.
+     */
+    public function getProofUrlAttribute(): ?string
+    {
+        return $this->hasProof()
+            ? route('api.orders.proof', ['order' => $this->getKey()])
+            : null;
+    }
+
+    /**
+     * Operational fields the customer has no business receiving.
+     *
+     * These serialize into every `GET /api/orders` response otherwise — which
+     * admin assigned the order, and when a driver handed cash over. Hiding
+     * affects toArray()/toJson() only, so the admin panel and the services
+     * still read `$order->driver_id` exactly as before.
+     *
+     * `failed_attempts`, `delivery_note`, `picked_up_at` and `delivered_at`
+     * are deliberately NOT hidden — those are the customer's own delivery,
+     * and the app uses them to date the tracker and explain a missed attempt.
+     */
+    protected $hidden = [
+        'driver_id', 'assigned_by', 'cash_collected_at',
+        // Where the photo physically lives is nobody's business but the
+        // server's — the customer gets `proof_url`, which goes through the
+        // gate. Handing out disk and path would be handing out a way around it.
+        'proof_disk', 'proof_path',
+    ];
+
+    /**
+     * Who is bringing this order, for the customer's screen.
+     *
+     * Name and phone only, and only once the order has actually left the store
+     * — before that the assignment can still change, and naming a driver who
+     * then gets swapped is worse than naming nobody. A pickup never has one.
+     *
+     * The phone is the point: the single most useful thing a customer can do
+     * when a van is outside is answer the door, and the second is call. This
+     * is the half of the admin's flood that is not order updates — "where is
+     * my order" messages that nobody at the store can answer any better than
+     * the person holding it.
+     */
+    public function getDriverContactAttribute(): ?array
+    {
+        if (! in_array($this->status, ['shipped', 'completed'], true)) {
+            return null;
+        }
+
+        $driver = $this->relationLoaded('driver') ? $this->getRelation('driver') : $this->driver;
+
+        if (! $driver) {
+            return null;
+        }
+
+        return [
+            'name'  => $driver->name,
+            'phone' => $driver->phone,
+        ];
+    }
 
     /** True when any line is custom-tinted, i.e. mixed to a chosen colour. */
     public function getHasCustomItemsAttribute(): bool
