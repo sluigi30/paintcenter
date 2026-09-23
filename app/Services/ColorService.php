@@ -33,6 +33,10 @@ class ColorService
 
     private const KAPPA = 7.787037037037035;   // (1/3)(29/6)^2
 
+    /** 25^7, the pivot in CIEDE2000's chroma weighting. Precomputed: it is
+     *  evaluated twice per distance and the solver calls that ~5,000 times. */
+    private const POW25_7 = 6103515625.0;
+
     // -------------------------------------------------------
     // Input handling
     // -------------------------------------------------------
@@ -141,6 +145,165 @@ class ColorService
     public static function chroma(array $lab): float
     {
         return sqrt($lab['a'] ** 2 + $lab['b'] ** 2);
+    }
+
+    // -------------------------------------------------------
+    // Perceptual distance
+    // -------------------------------------------------------
+
+    /**
+     * CIEDE2000 — how different two colours look, as one number.
+     *
+     * WHY NOT CIE76. The mobile `lib/color.js` computes plain Euclidean
+     * distance in Lab and its comment says "plenty for clustering / round-trip
+     * checks; ΔE2000 is not needed". That is correct for what it describes and
+     * stops being correct the moment the number is shown to a customer as a
+     * quality claim: CIE76 assumes Lab is perceptually uniform, and it is not.
+     * It overstates differences in saturated blues and understates them near
+     * the neutral axis, where two greys on opposite sides of neutral read as
+     * far apart to the formula and identical to a person. CIEDE2000 adds the
+     * three weighting functions (S_L, S_C, S_H), the a* expansion near
+     * neutral, and the blue-region hue rotation that correct exactly those.
+     *
+     * So: ΔE2000 for anything the customer reads, CIE76 stays in
+     * roomPalette.js clustering where it runs over thousands of samples and
+     * the existing argument for it holds. See REACHABILITY.md.
+     *
+     * kL = kC = kH = 1 (reference conditions), so they are omitted rather than
+     * carried as parameters nothing in this app would ever set.
+     *
+     * Pinned against the published Sharma/Wu/Dalal test set in
+     * tests/Unit/DeltaE2000Test.php — 34 pairs chosen to break naive
+     * implementations at the hue discontinuity. Do not "simplify" the branches
+     * below; that is what those pairs exist to catch.
+     *
+     * @param  array{l:float,a:float,b:float}  $lab1
+     * @param  array{l:float,a:float,b:float}  $lab2
+     */
+    public static function deltaE2000(array $lab1, array $lab2): float
+    {
+        $l1 = (float) $lab1['l'];
+        $a1 = (float) $lab1['a'];
+        $b1 = (float) $lab1['b'];
+        $l2 = (float) $lab2['l'];
+        $a2 = (float) $lab2['a'];
+        $b2 = (float) $lab2['b'];
+
+        $c1 = sqrt($a1 ** 2 + $b1 ** 2);
+        $c2 = sqrt($a2 ** 2 + $b2 ** 2);
+        $cBar = ($c1 + $c2) / 2;
+
+        // G expands a* for low-chroma colours. This is the term that fixes
+        // CIE76's worst failure — two near-neutrals straddling the grey axis.
+        $cBar7 = $cBar ** 7;
+        $g = 0.5 * (1 - sqrt($cBar7 / ($cBar7 + self::POW25_7)));
+
+        $a1p = (1 + $g) * $a1;
+        $a2p = (1 + $g) * $a2;
+
+        $c1p = sqrt($a1p ** 2 + $b1 ** 2);
+        $c2p = sqrt($a2p ** 2 + $b2 ** 2);
+
+        $h1p = self::hueAngle($a1p, $b1);
+        $h2p = self::hueAngle($a2p, $b2);
+
+        $dLp = $l2 - $l1;
+        $dCp = $c2p - $c1p;
+
+        $cProduct = $c1p * $c2p;
+
+        // Hue difference, and the whole difficulty of this formula. An angle
+        // is circular, so 359 deg and 1 deg are 2 deg apart, not 358 — and a
+        // colour ON the neutral axis has no hue to difference at all.
+        if ($cProduct == 0.0) {
+            $dhp = 0.0;
+        } else {
+            $dhp = $h2p - $h1p;
+
+            if ($dhp > 180) {
+                $dhp -= 360;
+            } elseif ($dhp < -180) {
+                $dhp += 360;
+            }
+        }
+
+        $dHp = 2 * sqrt($cProduct) * sin(deg2rad($dhp / 2));
+
+        $lBarP = ($l1 + $l2) / 2;
+        $cBarP = ($c1p + $c2p) / 2;
+
+        // Mean hue. Same circularity, and the zero-chroma case must NOT be
+        // averaged: one of the two angles is meaningless, so summing keeps
+        // whichever one is real.
+        if ($cProduct == 0.0) {
+            $hBarP = $h1p + $h2p;
+        } elseif (abs($h1p - $h2p) <= 180) {
+            $hBarP = ($h1p + $h2p) / 2;
+        } elseif ($h1p + $h2p < 360) {
+            $hBarP = ($h1p + $h2p + 360) / 2;
+        } else {
+            $hBarP = ($h1p + $h2p - 360) / 2;
+        }
+
+        $t = 1
+            - 0.17 * cos(deg2rad($hBarP - 30))
+            + 0.24 * cos(deg2rad(2 * $hBarP))
+            + 0.32 * cos(deg2rad(3 * $hBarP + 6))
+            - 0.20 * cos(deg2rad(4 * $hBarP - 63));
+
+        $sL = 1 + (0.015 * ($lBarP - 50) ** 2) / sqrt(20 + ($lBarP - 50) ** 2);
+        $sC = 1 + 0.045 * $cBarP;
+        $sH = 1 + 0.015 * $cBarP * $t;
+
+        // The hue-rotation term. It only bites around 275 deg — the blues,
+        // which is precisely where this app's wall suggestions live.
+        $cBarP7 = $cBarP ** 7;
+        $rC = 2 * sqrt($cBarP7 / ($cBarP7 + self::POW25_7));
+        $dTheta = 30 * exp(-((($hBarP - 275) / 25) ** 2));
+        $rT = -sin(deg2rad(2 * $dTheta)) * $rC;
+
+        $termL = $dLp / $sL;
+        $termC = $dCp / $sC;
+        $termH = $dHp / $sH;
+
+        return sqrt(
+            $termL ** 2
+            + $termC ** 2
+            + $termH ** 2
+            + $rT * $termC * $termH
+        );
+    }
+
+    /**
+     * Perceptual distance between two hexes, or null if either is unparseable.
+     *
+     * Null rather than 0.0 on bad input: zero is a real answer meaning
+     * "identical", and a variant with no hex_code on file must never read as a
+     * perfect match for whatever the customer asked for.
+     */
+    public static function distance(?string $hexA, ?string $hexB): ?float
+    {
+        $labA = self::hexToLab($hexA);
+        $labB = self::hexToLab($hexB);
+
+        if ($labA === null || $labB === null) {
+            return null;
+        }
+
+        return self::deltaE2000($labA, $labB);
+    }
+
+    /** Hue angle in degrees, 0–360. Undefined on the neutral axis, where the
+     *  convention is 0 and the callers above never use it. */
+    private static function hueAngle(float $a, float $b): float
+    {
+        if ($a == 0.0 && $b == 0.0) {
+            return 0.0;
+        }
+
+        $degrees = rad2deg(atan2($b, $a));
+
+        return $degrees >= 0 ? $degrees : $degrees + 360;
     }
 
     // -------------------------------------------------------

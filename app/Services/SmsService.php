@@ -144,6 +144,21 @@ class SmsService
         return $digits;
     }
 
+    /**
+     * "0917 ••• 233" — what a customer is shown when the app must name the
+     * number a code went to without being told what it is. Enough to recognise
+     * your own handset, not enough to read a stranger's off a screen. Mirrored
+     * by maskPhone() in the mobile app's reset screen.
+     */
+    public static function maskPhone(string $phone): string
+    {
+        $local = self::normalizePhone($phone);
+
+        return strlen($local) >= 11
+            ? substr($local, 0, 4) . ' ••• ' . substr($local, -3)
+            : $local;
+    }
+
     /** E.164 (+639XXXXXXXXX) — what the gateway hands to the network. */
     public static function toE164(string $phone): string
     {

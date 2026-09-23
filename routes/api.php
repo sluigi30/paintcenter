@@ -22,6 +22,14 @@ Route::prefix('auth')->group(function () {
     // phone (the 'otp-send' limiter); verify-otp is capped to blunt guessing.
     Route::post('/send-otp',   [AuthController::class, 'sendOtp'])->middleware('throttle:otp-send');
     Route::post('/verify-otp', [AuthController::class, 'verifyOtp'])->middleware('throttle:10,1');
+
+    // Forgotten password, customers only (see AuthController::resettableCustomer
+    // — staff reset at the panel, through Laravel's own broker). Keyed by the
+    // email throughout: the phone belongs to the account, not to whoever is
+    // typing, and the app is only ever told a masked version of it.
+    Route::post('/forgot-password',   [AuthController::class, 'forgotPassword'])->middleware('throttle:password-reset');
+    Route::post('/verify-reset-code', [AuthController::class, 'verifyResetCode'])->middleware('throttle:10,1');
+    Route::post('/reset-password',    [AuthController::class, 'resetPassword'])->middleware('throttle:10,1');
 });
 
 // Public product routes
@@ -31,9 +39,29 @@ Route::get('/brands',              [ProductController::class, 'brands']);
 Route::get('/brands/{brand}/categories', [ProductController::class, 'brandCategories']);
 Route::get('/categories',          [ProductController::class, 'categories']);
 
-// Custom colour: which base a picked colour needs, and whether paint can
-// reach it at all. Public — choosing a colour precedes any intent to buy.
+// DEPRECATED — no screen in the mobile app calls this any more.
+//
+// resolve() answers against the latex TINTING gamut and returns a P/M/D base
+// code: both model a dispenser NCM does not own. Anything asking "can we make
+// this colour" belongs on /colors/reachable below.
+//
+// STILL ROUTED, deliberately, and not yet deleted because:
+//   1. Removing a public endpoint breaks any older installed build that still
+//      calls it, and the app ships separately from this API.
+//   2. CartController still ACCEPTS custom_hex, so the server half of the
+//      retired flow is alive regardless of whether this route exists —
+//      deleting only this would leave the fiction half-retired.
+//   3. MIXING.md defers retiring is_custom_color until no orders in the
+//      retention window depend on it. This goes with that, not before it.
+//
+// See REACHABILITY.md Phase 4.
 Route::get('/colors/resolve',      [ColorController::class, 'resolve']);
+
+// Can the shop make it, and with what recipe — solved against live stock.
+// Batched (the suggestions screen asks for four at once) and throttled,
+// because each target is a search over the shelf rather than a lookup.
+Route::get('/colors/reachable',    [ColorController::class, 'reachable'])
+    ->middleware('throttle:30,1');
 
 // Protected routes
 Route::middleware('auth:sanctum')->group(function () {
@@ -41,6 +69,11 @@ Route::middleware('auth:sanctum')->group(function () {
     // Auth
     Route::post('/auth/logout', [AuthController::class, 'logout']);
     Route::get('/auth/me',      [AuthController::class, 'me']);
+
+    // Changing your own password, with the current one as proof. Throttled:
+    // a stolen, unlocked phone should not be able to sit there guessing it.
+    Route::post('/auth/change-password', [AuthController::class, 'changePassword'])
+        ->middleware('throttle:6,1');
 
     // Counts for the app's tab badges — polled, so kept to two integers
     Route::get('/badges', [BadgeController::class, 'index']);

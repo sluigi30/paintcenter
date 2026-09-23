@@ -44,6 +44,15 @@ class AppServiceProvider extends ServiceProvider
             return Limit::perMinute(4)->by($key);
         });
 
+        // Same reasoning for password-reset codes, keyed by the email typed —
+        // that is what the endpoint resolves the phone from, and an IP limit
+        // would let one shared connection lock out a whole household.
+        RateLimiter::for('password-reset', function (Request $request) {
+            $key = strtolower(trim((string) $request->input('email'))) ?: $request->ip();
+
+            return Limit::perMinute(4)->by('pwreset:' . $key);
+        });
+
         // Record admin / super admin sign-ins in the audit trail so a
         // super admin can see session activity, not just data changes.
         Event::listen(Login::class, function (Login $event) {

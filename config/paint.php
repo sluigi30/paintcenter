@@ -136,6 +136,60 @@ return [
 
     ],
 
+    /*
+    |--------------------------------------------------------------------------
+    | Reachability (solving a target colour against stock)
+    |--------------------------------------------------------------------------
+    |
+    | Given a colour the customer wants, MixSolver searches recipes over what
+    | is actually on the shelf. The caps below bound that search.
+    |
+    | THEY ARE A HEURISTIC. Neither prune is proven to preserve the best
+    | recipe — they are derived from a time budget and their cost is MEASURED
+    | against an exhaustive reference solver in tests. Raising a cap widens
+    | the search and can only improve the best colour found; lowering one
+    | trades accuracy for latency. Do not treat these as physical constants
+    | the way base/ and gamut/ above are. See REACHABILITY.md.
+    |
+    */
+    'reachable' => [
+
+        // How many bases, ranked nearest-first, the search actually explores.
+        'base_cap' => 10,
+
+        // How many tints per base, ranked by how much they move the mix
+        // TOWARD the target.
+        'tint_cap' => 8,
+
+        // Pints of any one tint. Bounded again by that variant's stock.
+        'max_per_tint' => 4,
+
+        // Distinct tints in one proposed recipe. NOT a combinatorics limit —
+        // config('paint.mix.max_tints') lets a customer hand-build more. This
+        // is what the SOLVER proposes, kept small so the counter's sheet stays
+        // readable and batch error does not compound. See MIXING.md.
+        'max_distinct_tints' => 2,
+
+        // Recipes within this much ΔE of the best found are treated as
+        // indistinguishable, and the cheapest of them wins. A fourth pint
+        // bought to gain 0.3 ΔE is real money for a difference nobody can see
+        // — and one the prediction cannot honestly resolve while tint_strength
+        // is uncalibrated.
+        'tie_tolerance' => 1.0,
+
+        // What the customer is told about the gap. Upper bound of each band,
+        // in ΔE2000; anything above the last one is "the closest we can pour".
+        //
+        // These describe the PREDICTION, not the poured can. No band may ever
+        // be worded as a guarantee.
+        'bands' => [
+            'match' => 2.0,   // "We can mix this"
+            'close' => 5.0,   // "Very close"
+            'near'  => 10.0,  // "Close, but visibly different"
+        ],
+
+    ],
+
     'gamut' => [
         'max_chroma' => 110.0,  // ceiling in mid tones
         'knee_l'     => 65.0,   // above this lightness the ceiling falls off
