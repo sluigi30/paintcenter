@@ -210,6 +210,15 @@ class DriverDeliveryController extends Controller
             'status'       => $order->status,
             'customer'     => $order->user?->name,
             'address'      => $order->shipping_address,
+            // Directions, not an address. Shown to the driver, never fed to
+            // the map query — "green gate" only makes a geocode worse.
+            'landmark'     => $order->delivery_landmark,
+            // The pin, when the customer set one. The app targets Navigate at
+            // these instead of the address string; accuracy travels with them
+            // so a ±480 m fix is never drawn as a doorstep.
+            'lat'          => $order->hasLocationPin() ? (float) $order->delivery_lat : null,
+            'lng'          => $order->hasLocationPin() ? (float) $order->delivery_lng : null,
+            'accuracy_m'   => $order->location_accuracy,
             'total'        => $order->total_amount,
             'is_cod'       => $order->isCashOnDelivery(),
             'attempts'     => $order->failed_attempts,

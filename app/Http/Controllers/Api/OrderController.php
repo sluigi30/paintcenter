@@ -38,6 +38,19 @@ class OrderController extends Controller
         $validated = $request->validate([
             'order_type' => 'required|in:delivery,pickup',
             'shipping_address' => 'required_if:order_type,delivery|nullable|string',
+            // Optional, and deliberately so. It is the most useful line on the
+            // form for a provincial delivery, but a customer who cannot think
+            // of a landmark must not be blocked from ordering over it.
+            'delivery_landmark' => 'nullable|string|max:255',
+            // The pin. Optional throughout — a customer may decline the
+            // permission, and one ordering for a job site SHOULD decline.
+            // `required_with` on the pair, so a half-sent coordinate (one
+            // field lost to a flaky connection) is rejected rather than
+            // stored as a pin somewhere on the equator.
+            'delivery_lat'      => 'nullable|required_with:delivery_lng|numeric|between:-90,90',
+            'delivery_lng'      => 'nullable|required_with:delivery_lat|numeric|between:-180,180',
+            // Metres, as REPORTED by the fix. Never assumed, never promised.
+            'location_accuracy' => 'nullable|integer|min:0|max:100000',
             // Which methods are allowed depends on the order type — see
             // Order::PAYMENT_METHODS_BY_TYPE. Validated against the list for
             // the type that was actually sent, so a client that hides the
@@ -146,8 +159,50 @@ class OrderController extends Controller
                 'order_type' => $validated['order_type'],
                 'status' => 'pending',
                 'total_amount' => $totalAmount,
-                'shipping_address' => $validated['shipping_address'] ?? null,
+                'shipping_address'  => $validated['shipping_address'] ?? null,
+                'delivery_landmark' => $validated['delivery_landmark'] ?? null,
+                'delivery_lat'      => $validated['delivery_lat'] ?? null,
+                'delivery_lng'      => $validated['delivery_lng'] ?? null,
+                'location_accuracy' => $validated['location_accuracy'] ?? null,
+                // Stamped here, not sent by the client. When a pin was taken
+                // is the store's record of it, and it lets checkout ask
+                // "pinned 3 months ago — still right?" later on.
+                'location_pinned_at' => isset($validated['delivery_lat']) ? now() : null,
             ]);
+
+            // Remember what they actually used.
+            //
+            // `users.address` was only ever written at registration, so
+            // checkout pre-filled a value the customer had no way to improve:
+            // typing a better address here was forgotten by the next order and
+            // they retyped something short. Persisting it makes the prompt
+            // worth improving at all — the address gets better over time
+            // instead of resetting. Delivery only; a pickup has no address to
+            // remember, and blanking one on a pickup order would lose it.
+            if ($validated['order_type'] === 'delivery') {
+                $user = $request->user();
+
+                $remember = [
+                    'address'  => $validated['shipping_address'] ?? $user->address,
+                    'landmark' => $validated['delivery_landmark'] ?? $user->landmark,
+                ];
+
+                // The pin is only overwritten when a NEW one was sent. An order
+                // placed without pinning must not wipe a good pin the customer
+                // set last time — they may simply have been somewhere else, or
+                // ordering for somebody else, which is exactly when they are
+                // right to skip it.
+                if (isset($validated['delivery_lat'], $validated['delivery_lng'])) {
+                    $remember += [
+                        'delivery_lat'       => $validated['delivery_lat'],
+                        'delivery_lng'       => $validated['delivery_lng'],
+                        'location_accuracy'  => $validated['location_accuracy'] ?? null,
+                        'location_pinned_at' => now(),
+                    ];
+                }
+
+                $user->update($remember);
+            }
 
             foreach ($orderItems as $item) {
                 OrderItem::create([

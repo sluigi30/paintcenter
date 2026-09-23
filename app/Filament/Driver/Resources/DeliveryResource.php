@@ -179,21 +179,52 @@ class DeliveryResource extends Resource
                         ->label('Deliver to')
                         ->placeholder('Address on file')
                         ->columnSpanFull()
-                        ->formatStateUsing(function ($state) {
-                            if (blank($state)) {
+                        ->formatStateUsing(function ($state, Order $record) {
+                            if (blank($state) && ! $record->hasLocationPin()) {
                                 return null;
                             }
 
-                            $url = 'https://www.google.com/maps/search/?api=1&query='
-                                . urlencode(trim($state));
+                            // A PIN when the customer set one, the address
+                            // string otherwise. The pin is the whole point of
+                            // Phase 5: a search for "Brgy. Poblacion, Pilar"
+                            // resolves to a polygon and lands the driver in the
+                            // wrong street.
+                            $query = $record->hasLocationPin()
+                                ? $record->delivery_lat . ',' . $record->delivery_lng
+                                : trim((string) $state);
+
+                            $url = 'https://www.google.com/maps/search/?api=1&query=' . urlencode($query);
+
+                            $html = e((string) $state);
+
+                            if ($record->hasLocationPin()) {
+                                // Quoted, never hidden. A ±480 m fix taken
+                                // indoors is barely better than the town
+                                // centre, and a driver who trusts it wastes
+                                // the trip the pin was meant to save.
+                                $accuracy = $record->location_accuracy
+                                    ? ' (±' . $record->location_accuracy . ' m)'
+                                    : '';
+
+                                $html .= '<br><span style="color:#15803d;font-weight:600">Pinned by the customer'
+                                    . e($accuracy) . '</span>';
+                            }
 
                             return new HtmlString(
-                                e($state)
+                                $html
                                 . '<br><a href="' . e($url) . '" target="_blank" rel="noopener noreferrer"'
                                 . ' style="display:inline-flex;align-items:center;gap:.35rem;margin-top:.4rem;'
                                 . 'font-weight:700;color:#1d4ed8;text-decoration:underline">Navigate &rarr;</a>'
                             );
                         }),
+                ]),
+
+            Section::make('Landmark / directions')
+                ->visible(fn (Order $record) => filled($record->delivery_landmark))
+                ->schema([
+                    TextEntry::make('delivery_landmark')
+                        ->hiddenLabel()
+                        ->columnSpanFull(),
                 ]),
 
             Section::make('What to hand over')

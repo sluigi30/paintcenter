@@ -28,6 +28,11 @@ class User extends Authenticatable implements FilamentUser
         'email',
         'password',
         'address',
+        'landmark',
+        'delivery_lat',
+        'delivery_lng',
+        'location_accuracy',
+        'location_pinned_at',
     ];
 
     protected $appends = ['name'];
@@ -40,7 +45,10 @@ class User extends Authenticatable implements FilamentUser
     protected function casts(): array
     {
         return [
-            'password' => 'hashed',
+            'password'           => 'hashed',
+            'location_pinned_at' => 'datetime',
+            'delivery_lat'       => 'decimal:7',
+            'delivery_lng'       => 'decimal:7',
         ];
     }
 

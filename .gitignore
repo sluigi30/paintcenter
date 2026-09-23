@@ -23,3 +23,6 @@
 Homestead.json
 Homestead.yaml
 Thumbs.db
+
+# IDE language-server scratch output, not project code
+storage/framework/lsp-*.php

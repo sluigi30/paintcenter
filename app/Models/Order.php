@@ -26,6 +26,11 @@ class Order extends Model
         'status',
         'total_amount',
         'shipping_address',
+        'delivery_landmark',
+        'delivery_lat',
+        'delivery_lng',
+        'location_accuracy',
+        'location_pinned_at',
         'cancellation_reason',
         'cancelled_by',
         'cancelled_at',
@@ -56,7 +61,11 @@ class Order extends Model
             'picked_up_at'      => 'datetime',
             'delivered_at'      => 'datetime',
             'cash_collected_at' => 'datetime',
-            'proof_captured_at' => 'datetime',
+            'proof_captured_at'  => 'datetime',
+            'location_pinned_at' => 'datetime',
+            'delivery_lat'       => 'decimal:7',
+            'delivery_lng'       => 'decimal:7',
+            'location_accuracy'  => 'integer',
             'failed_attempts'   => 'integer',
         ];
     }
@@ -67,6 +76,12 @@ class Order extends Model
      * drift from the server's — offering a Cancel button the API then refuses.
      */
     protected $appends = ['has_custom_items', 'can_cancel', 'driver_contact', 'proof_url'];
+
+    /** True when the customer pinned where the order actually goes. */
+    public function hasLocationPin(): bool
+    {
+        return $this->delivery_lat !== null && $this->delivery_lng !== null;
+    }
 
     /** True while the photo taken at handover is still on disk. */
     public function hasProof(): bool

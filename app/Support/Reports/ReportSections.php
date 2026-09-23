@@ -7,6 +7,7 @@ use App\Services\Reports\Metrics\CategoryMetrics;
 use App\Services\Reports\Metrics\ColorMetrics;
 use App\Services\Reports\Metrics\CustomerMetrics;
 use App\Services\Reports\Metrics\DeadStockMetrics;
+use App\Services\Reports\Metrics\DeliveryMetrics;
 use App\Services\Reports\Metrics\InventoryMetrics;
 use App\Services\Reports\Metrics\OperationsMetrics;
 use App\Services\Reports\Metrics\OrderMetrics;
@@ -79,6 +80,19 @@ final class ReportSections
                 hasChart: true,
                 // A short bar list beside a three-row table.
                 pageBreak: ReportSection::BREAK_AVOID,
+            ),
+
+            new ReportSection(
+                key: 'deliveries',
+                label: 'Delivery performance',
+                group: self::GROUP_OPERATIONS,
+                metrics: [DeliveryMetrics::class],
+                description: 'Deliveries completed, how many needed a second trip, and what each driver carried.',
+                // Anchored to delivered_at, not created_at — this measures
+                // WORK DONE in the window, not orders placed in it, so it does
+                // not reconcile to the period's order count and is not meant
+                // to. See DeliveryMetrics for the reasoning.
+                defaultEnabled: false,
             ),
 
             new ReportSection(
