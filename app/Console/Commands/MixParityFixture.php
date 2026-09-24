@@ -47,9 +47,13 @@ class MixParityFixture extends Command
                 'pint_liters' => config('paint.mix.pint_liters'),
                 'reflectance_floor' => config('paint.mix.reflectance_floor'),
                 'reflectance_ceil' => config('paint.mix.reflectance_ceil'),
+                // The words the customer reads about a match are chosen by
+                // these, on both sides.
+                'bands' => config('paint.mix.bands'),
             ],
             'mixes' => [],
             'liters' => [],
+            'distances' => [],
         ];
 
         foreach ($this->cases() as $name => $components) {
@@ -70,7 +74,17 @@ class MixParityFixture extends Command
             $fixture['liters'][] = [
                 'size_volume' => $size,
                 'expected' => (new ProductVariant(['size_volume' => $size]))->liters,
-                'is_pint' => (new ProductVariant(['size_volume' => $size]))->is_pint,
+            ];
+        }
+
+        // ΔE2000, which decides what the bench SAYS about a match against a
+        // target. The phone has to reach the same number from the same two
+        // hexes, or it tells the customer "close" where the server says "near".
+        foreach ($this->distancePairs() as [$a, $b]) {
+            $fixture['distances'][] = [
+                'a' => $a,
+                'b' => $b,
+                'expected' => ColorService::distance($a, $b),
             ];
         }
 
@@ -85,6 +99,30 @@ class MixParityFixture extends Command
         ));
 
         return self::SUCCESS;
+    }
+
+    /**
+     * Pairs for the ΔE2000 check: identical, near-neutral (where CIE76 fails
+     * worst), the blue hue-rotation region, across the hue wrap, and far apart.
+     *
+     * @return array<int,array{0:string,1:string}>
+     */
+    private function distancePairs(): array
+    {
+        return [
+            ['#FFFFFF', '#FFFFFF'],
+            ['#808080', '#838080'],
+            ['#7F7F7F', '#807F80'],
+            ['#17357A', '#2244AA'],
+            ['#3050C0', '#4060D0'],
+            ['#CC2222', '#CC2233'],
+            ['#FF0010', '#F00000'],
+            ['#E75E5E', '#ED7878'],
+            ['#F4F2EC', '#E6E4DC'],
+            ['#000000', '#FFFFFF'],
+            ['#1A1A1A', '#C9A227'],
+            ['#B87355', '#C47A52'],
+        ];
     }
 
     /**
@@ -134,6 +172,18 @@ class MixParityFixture extends Command
             // Awkward volumes — rounding is where two languages part company.
             'lopsided ratio' => [$part('#FFFFFF', 16), $part('#CC2222', 0.001)],
             'tiny base' => [$part('#CC2222', 0.05), $part('#FFFFFF', 4)],
+        ];
+
+        // Tint recipes: MILLILITRES of colorant into litres of base. Ratios of
+        // 0.1-6% by volume, far smaller than any pint mix, which is where a
+        // float difference between the two languages would show first.
+        $ml = fn (float $v) => $v / 1000;
+        $cases += [
+            'recipe 20ml oxide red in 4L' => [$part('#FFFFFF', 4), $part('#9B3A2A', $ml(20))],
+            'recipe 0.5ml black in 1L' => [$part('#FFFFFF', 1), $part('#1A1A1A', $ml(0.5))],
+            'recipe at the 60ml/L cap' => [$part('#FFFFFF', 4), $part('#17357A', $ml(240))],
+            'recipe three colorants' => [$part('#F4F2EC', 4), $part('#9B3A2A', $ml(20)), $part('#C9A227', $ml(10)), $part('#1A1A1A', $ml(1.5))],
+            'recipe deep base, strength 3' => [$part('#E6E4DC', 1), $part('#B3161C', $ml(90), 3.0)],
         ];
 
         // Every grey step through the clamp and back, which is where an

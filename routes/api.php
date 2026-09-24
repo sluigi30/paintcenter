@@ -39,28 +39,23 @@ Route::get('/brands',              [ProductController::class, 'brands']);
 Route::get('/brands/{brand}/categories', [ProductController::class, 'brandCategories']);
 Route::get('/categories',          [ProductController::class, 'categories']);
 
-// DEPRECATED — no screen in the mobile app calls this any more.
-//
-// resolve() answers against the latex TINTING gamut and returns a P/M/D base
-// code: both model a dispenser NCM does not own. Anything asking "can we make
-// this colour" belongs on /colors/reachable below.
-//
-// STILL ROUTED, deliberately, and not yet deleted because:
-//   1. Removing a public endpoint breaks any older installed build that still
-//      calls it, and the app ships separately from this API.
-//   2. CartController still ACCEPTS custom_hex, so the server half of the
-//      retired flow is alive regardless of whether this route exists —
-//      deleting only this would leave the fiction half-retired.
-//   3. MIXING.md defers retiring is_custom_color until no orders in the
-//      retention window depend on it. This goes with that, not before it.
-//
-// See REACHABILITY.md Phase 4.
-Route::get('/colors/resolve',      [ColorController::class, 'resolve']);
+// Is this colour already on the shelf as a finished paint? Asked BEFORE the
+// mixing bench, so a colour the shop sells ready-mixed goes to that can rather
+// than being charged a mixing fee. Batched (the suggestions screen asks four
+// at once). Replaces /colors/resolve and /colors/reachable, retired
+// 2026-09-24 with the dispenser and pint designs they answered for.
+Route::get('/colors/stocked',      [ColorController::class, 'stocked'])
+    ->middleware('throttle:30,1');
 
-// Can the shop make it, and with what recipe — solved against live stock.
-// Batched (the suggestions screen asks for four at once) and throttled,
-// because each target is a search over the shelf rather than a lookup.
-Route::get('/colors/reachable',    [ColorController::class, 'reachable'])
+// The mixing bench's ingredients: the bases it starts from (products the
+// catalogue never lists) and the colorant presets added to them by the ml.
+// Public, like the catalogue, so the bench can be browsed before signing in.
+Route::get('/mix/bases',           [MixController::class, 'bases']);
+Route::get('/mix/tints',           [MixController::class, 'tints']);
+
+// A proposed recipe for a colour, for every base of one size, best first.
+// Throttled: each call is a search (~12 ms per base can), not a lookup.
+Route::get('/mix/solve',           [MixController::class, 'solve'])
     ->middleware('throttle:30,1');
 
 // Protected routes
@@ -84,9 +79,9 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::get('/',                  [CartController::class, 'summary']);
         Route::post('/add',              [CartController::class, 'add']);
 
-        // A customer-composed mix: a base can plus the pints poured into it,
-        // posted as ONE recipe. Separate from /add because half a recipe in
-        // the cart is not a partial order, it is a different colour.
+        // A tint recipe: a mixing-base can plus colorant by the ml, ONE line.
+        // Separate from /add because the server decides the colour and the
+        // price from the recipe; the client is trusted with neither.
         Route::post('/mix',              [MixController::class, 'store']);
 
         Route::delete('/',               [CartController::class, 'clear']);

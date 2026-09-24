@@ -174,24 +174,6 @@ class ProductCatalogShapeTest extends TestCase
         $this->assertSame('Testbrand Latex Colors', $response->json('data.0.name'));
     }
 
-    public function test_a_custom_colour_product_offers_no_shades_of_its_own(): void
-    {
-        $product = Product::create([
-            'brand_id' => $this->brand->id,
-            'name' => 'Testbrand Permacoat — Custom Colour',
-            'is_custom_color' => true,
-        ]);
-
-        $product->variants()->create([
-            'size_volume' => '4L',
-            'base_code' => 'P',
-            'price' => 1250,
-            'stock' => 5,
-        ]);
-
-        $this->assertSame([], $product->fresh('variants')->colors);
-    }
-
     // -------------------------------------------------------
     // Several categories per product
     // -------------------------------------------------------

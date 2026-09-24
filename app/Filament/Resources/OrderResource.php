@@ -9,6 +9,7 @@ use App\Models\User;
 use App\Services\DeliveryService;
 use App\Services\OrderCancellationService;
 use App\Services\OrderStatusService;
+use App\Services\TintRecipe;
 use Filament\Actions\Action;
 use Filament\Actions\EditAction;
 use Filament\Forms\Components\DatePicker;
@@ -231,6 +232,101 @@ class OrderResource extends Resource
         HTML;
     }
 
+    /**
+     * A tint recipe, written out for the person holding the colorant.
+     *
+     * Read entirely off the order line's SNAPSHOT (names, hexes, ml), never the
+     * live presets: a colorant renamed or archived after the order was placed
+     * must not change what the counter pours.
+     *
+     * Amounts are per can AND for the whole batch. The per-can figure is what
+     * the customer approved; the batch total is what the counter measures,
+     * because several cans of one colour have to come out of one batch.
+     */
+    protected static function tintRecipeCard(OrderItem $item): string
+    {
+        $hex = e($item->custom_hex ?? '#CCCCCC');
+        $label = $item->custom_color_name ? e($item->custom_color_name) : 'Unnamed mix';
+        $qty = max(1, (int) $item->quantity);
+
+        $product = e($item->product?->name ?: 'Mixing base');
+        $base = e($item->color_name ?: 'Base');
+        $size = e($item->size_volume ?? '');
+        $cans = $qty === 1 ? '1 can' : "{$qty} cans";
+
+        $batchHead = $qty > 1
+            ? '<span style="width:6.5rem;text-align:right;opacity:.6">all '.$qty.' cans</span>'
+            : '';
+
+        $lines = '';
+        $perCan = 0.0;
+
+        foreach ($item->mix_recipe ?? [] as $row) {
+            $ml = (float) ($row['ml'] ?? 0);
+            $perCan += $ml;
+
+            $swatch = e($row['hex'] ?? '#CCCCCC');
+            $name = e($row['name'] ?? 'Colorant');
+            $each = TintRecipe::formatMl($ml);
+            $batch = $qty > 1
+                ? '<span style="width:6.5rem;text-align:right;font-family:ui-monospace,monospace;font-weight:600">'
+                    .TintRecipe::formatMl($ml * $qty).' ml</span>'
+                : '';
+
+            $lines .= <<<HTML
+                <div style="display:flex;align-items:center;gap:.5rem;padding:.15rem 0 .15rem 1rem">
+                    <span style="width:14px;height:14px;flex:none;border-radius:3px;background:{$swatch};border:1px solid rgba(0,0,0,.2)"></span>
+                    <span style="flex:1">{$name}</span>
+                    <span style="width:5.5rem;text-align:right;font-family:ui-monospace,monospace">{$each} ml</span>
+                    {$batch}
+                </div>
+            HTML;
+        }
+
+        $totalEach = TintRecipe::formatMl($perCan);
+        $totalBatch = $qty > 1
+            ? '<span style="width:6.5rem;text-align:right;font-family:ui-monospace,monospace">'.TintRecipe::formatMl($perCan * $qty).' ml</span>'
+            : '';
+        $batchWarning = $qty > 1
+            ? "&#9888; Mix all {$qty} cans as ONE batch — separate batches differ visibly on a wall.<br>"
+            : '';
+
+        return <<<HTML
+            <div style="padding:.85rem;border:2px solid #b45309;border-radius:.5rem;margin-bottom:.75rem">
+                <div style="display:flex;gap:.85rem;align-items:center;margin-bottom:.6rem">
+                    <div style="width:56px;height:56px;flex:none;border-radius:.375rem;background:{$hex};border:1px solid rgba(0,0,0,.2)"></div>
+                    <div style="min-width:0">
+                        <div style="font-size:.7rem;font-weight:700;letter-spacing:.05em;color:#b45309">TINT TO ORDER</div>
+                        <div style="font-weight:600">{$label}</div>
+                        <div style="font-size:.875rem;opacity:.75">
+                            target <span style="font-family:ui-monospace,monospace">{$hex}</span>
+                        </div>
+                    </div>
+                </div>
+
+                <div style="font-size:.75rem;font-weight:700;opacity:.6;margin-top:.5rem">BASE</div>
+                <div style="padding:.15rem 0 .15rem 1rem">{$product} &middot; {$base} <span style="opacity:.6">({$size})</span> &times; {$cans}</div>
+
+                <div style="display:flex;gap:.5rem;font-size:.75rem;font-weight:700;margin-top:.5rem">
+                    <span style="flex:1;opacity:.6">ADD</span>
+                    <span style="width:5.5rem;text-align:right;opacity:.6">per can</span>
+                    {$batchHead}
+                </div>
+                {$lines}
+
+                <div style="display:flex;gap:.5rem;margin-top:.6rem;padding-top:.5rem;border-top:1px solid rgba(128,128,128,.25);font-weight:600">
+                    <span style="flex:1">Total colorant</span>
+                    <span style="width:5.5rem;text-align:right;font-family:ui-monospace,monospace">{$totalEach} ml</span>
+                    {$totalBatch}
+                </div>
+
+                <div style="margin-top:.5rem;font-size:.75rem;font-weight:600;color:#b45309">
+                    {$batchWarning}&#9888; The target colour is an estimate. Measure the recipe, not the swatch.
+                </div>
+            </div>
+        HTML;
+    }
+
     protected static function mixSheet(?Order $record): HtmlString
     {
         if (! $record?->exists) {
@@ -250,6 +346,14 @@ class OrderResource extends Resource
             $rows .= static::mixRecipe($lines);
         }
 
+        // Tint recipes next: one line each, but the counter still needs the
+        // recipe spelled out, not a swatch to eyeball.
+        [$recipes, $plain] = $plain->partition(fn ($i) => $i->mix_recipe !== null);
+
+        foreach ($recipes as $item) {
+            $rows .= static::tintRecipeCard($item);
+        }
+
         foreach ($plain as $item) {
             $name = e($item->product?->name ?: 'Deleted product');
             $size = e($item->size_volume ?? '—');
@@ -260,9 +364,9 @@ class OrderResource extends Resource
                 $label = $item->custom_color_name
                     ? e($item->custom_color_name)
                     : 'Custom colour';
-                // '' means the paint line makes no base distinction.
-                $base = ProductResource::BASE_SHORT[$item->variant?->base_code ?? ''] ?? '';
-                $baseText = $base !== '' ? ' &middot; '.e($base).' base' : '';
+                // A dispenser-era custom colour (retired 2026-09-24); the base
+                // it went into is named on the line, which order_items snapshot.
+                $baseText = $item->color_name ? ' &middot; '.e($item->color_name) : '';
 
                 // More than one can of one colour must come out of a single
                 // batch — cans mixed separately differ visibly on a wall.

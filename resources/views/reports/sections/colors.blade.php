@@ -23,8 +23,16 @@
         </div>
     </div>
 
+    @if (! empty($colors['colorants']))
+        <h3 class="rpt-sub">Colorant used (ml)</h3>
+        <x-rpt.bars :rows="$colors['colorants']" label-key="label" swatch-key="hex" value-key="ml" :money="false"
+                    empty="No colorant was poured in this period." />
+    @endif
+
     <x-rpt.note>
         A mixed can is counted once, at the colour the customer asked for. The base
         and the colourants poured into it are not listed here as separate sellers.
+        Colorant used is millilitres poured into tint recipes (per can, times cans) —
+        colorant is not stocked, so this is what to reorder by.
     </x-rpt.note>
 </x-rpt.section>

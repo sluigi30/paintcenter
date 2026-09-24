@@ -330,6 +330,11 @@
         min-width: 0;
     }
 
+    /* A pair holds ONE chart when the comparison is overlaid or there is no
+       comparison at all; left in the first column it leaves the right half
+       of the section empty. */
+    .rpt-figure-pair > :only-child { grid-column: 1 / -1; }
+
     .rpt-chart-group + .rpt-chart-group { margin-top: 18px; }
 
     .rpt-scale-note {

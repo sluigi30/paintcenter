@@ -3,21 +3,16 @@
 namespace App\Services;
 
 /**
- * Colour maths for custom tinting.
+ * Colour maths for mixing: sRGB <-> CIELAB, CIEDE2000 distance, and the
+ * Kubelka-Munk prediction of a mixed colour.
  *
- * Answers two questions about a hex the customer picked on their phone:
+ * Everything the customer READS about a colour is decided in CIELAB and
+ * measured in ΔE2000, NOT in HSL/HSV or RGB distance: those disagree with
+ * what a person sees, and the bands the customer is shown are only honest if
+ * the distance under them is perceptual.
  *
- *   1. Which base must it be tinted into?   baseCodeFor()
- *   2. Can it be made in latex paint at all? isInGamut()
- *
- * Both are decided in CIELAB, NOT in HSL/HSV. HSL "lightness" is a channel
- * average, not perceived lightness: a saturated yellow and a saturated blue
- * sit at the same HSL L but roughly 50 points of L* apart, and would pick
- * different bases while the rule says they should not. CIELAB is
- * approximately perceptually uniform, which is what the thresholds mean.
- *
- * Thresholds live in config/paint.php — they model pigment loading, not the
- * dispenser's spec. See CUSTOM_COLOR.md.
+ * Mirrored in the app's lib/paintMix.js and pinned by the parity fixture
+ * (php artisan mix:parity-fixture). See MIXING.md.
  */
 class ColorService
 {
@@ -304,156 +299,6 @@ class ColorService
         $degrees = rad2deg(atan2($b, $a));
 
         return $degrees >= 0 ? $degrees : $degrees + 360;
-    }
-
-    // -------------------------------------------------------
-    // The two questions this class exists to answer
-    // -------------------------------------------------------
-
-    /**
-     * Which base this colour must be tinted into: 'P', 'M' or 'D'.
-     * Null for an unparseable hex.
-     *
-     * A pale sage and a deep burgundy cannot go into the same can — a light
-     * colour needs a base with plenty of white, a saturated dark one needs a
-     * base with almost none or the colorant cannot reach the target and the
-     * result is washed out. Because that depends only on colorant load, it is
-     * computable from the colour and needs no colour chart.
-     */
-    public static function baseCodeFor(?string $hex): ?string
-    {
-        if (! $lab = self::hexToLab($hex)) {
-            return null;
-        }
-
-        $cfg = config('paint.base');
-        $l = $lab['l'];
-        $c = self::chroma($lab);
-
-        // Light AND muted -> pastel base.
-        if ($l > $cfg['pastel']['min_l'] && $c < $cfg['pastel']['max_c']) {
-            return $cfg['pastel']['code'];
-        }
-
-        // Dark OR saturated -> deep base.
-        if ($l < $cfg['deep']['max_l'] || $c > $cfg['deep']['min_c']) {
-            return $cfg['deep']['code'];
-        }
-
-        return $cfg['medium']['code'];
-    }
-
-    /**
-     * The most saturated a paint can be at a given lightness.
-     *
-     * Not a constant: to make a colour light you add white, and white
-     * desaturates, so the achievable chroma falls away as L* climbs. A flat
-     * cap has this backwards — it refuses a fire-engine red (C* 105 at
-     * L* 53, mixable) while passing an electric cyan at L* 91.
-     */
-    public static function maxChromaAt(float $lightness): float
-    {
-        $cfg = config('paint.gamut');
-
-        if ($lightness <= $cfg['knee_l']) {
-            return (float) $cfg['max_chroma'];
-        }
-
-        $headroom = max(0.0, (100 - $lightness) / (100 - $cfg['knee_l']));
-
-        // The floor matters: the curve reaches 0 at L* 100, where pure white
-        // lives, and white's chroma is not exactly 0 once it has been through
-        // a float conversion. Without this, the shop's best-selling colour is
-        // refused by rounding error.
-        return max(
-            (float) $cfg['min_chroma'],
-            $cfg['max_chroma'] * ($headroom ** $cfg['falloff'])
-        );
-    }
-
-    /**
-     * Whether latex paint can reach this colour at all.
-     * Fluorescents and electric brights sit outside the pigment gamut;
-     * metallics and pearls are a different product entirely.
-     *
-     * Weakest around cyan and blue-green, where CIELAB is known to
-     * understate chroma — see Known limitations in CUSTOM_COLOR.md.
-     */
-    public static function isInGamut(?string $hex): bool
-    {
-        if (! $lab = self::hexToLab($hex)) {
-            return false;
-        }
-
-        return self::chroma($lab) <= self::maxChromaAt($lab['l']) + 1e-9;
-    }
-
-    /**
-     * The nearest mixable colour to an out-of-gamut one — same hue and
-     * lightness, chroma pulled back to the limit. Lets the picker offer
-     * "we can't mix that, but we can mix this" instead of a dead end.
-     */
-    public static function clampToGamut(?string $hex): ?string
-    {
-        if (! $lab = self::hexToLab($hex)) {
-            return null;
-        }
-
-        if (self::isInGamut($hex)) {
-            return self::normalizeHex($hex);
-        }
-
-        // Lightness is held fixed while chroma is pulled in, so the ceiling
-        // is fixed too — hue and how light the colour reads both survive.
-        $target = self::maxChromaAt($lab['l']) * 0.98;
-
-        // The sRGB round-trip clips, which can nudge chroma back up, so
-        // verify and step down instead of trusting a single conversion.
-        for ($i = 0; $i < 12; $i++) {
-            $c = self::chroma($lab);
-
-            if ($c <= 0.0001) {
-                break;
-            }
-
-            $scale = min(1.0, $target / $c);
-            $lab['a'] *= $scale;
-            $lab['b'] *= $scale;
-
-            $candidate = self::labToHex($lab);
-
-            if (self::isInGamut($candidate)) {
-                return $candidate;
-            }
-
-            $target *= 0.9;
-        }
-
-        return self::labToHex($lab);
-    }
-
-    /**
-     * Everything the API and the picker need about a colour, in one call.
-     *
-     * @return array{hex:string,lightness:float,chroma:float,base_code:?string,in_gamut:bool,nearest_mixable:?string}|null
-     */
-    public static function describe(?string $hex): ?array
-    {
-        if (! $normalized = self::normalizeHex($hex)) {
-            return null;
-        }
-
-        $lab = self::hexToLab($normalized);
-        $inGamut = self::isInGamut($normalized);
-
-        return [
-            'hex' => $normalized,
-            'lightness' => round($lab['l'], 2),
-            'chroma' => round(self::chroma($lab), 2),
-            'base_code' => self::baseCodeFor($normalized),
-            'in_gamut' => $inGamut,
-            'nearest_mixable' => $inGamut ? null : self::clampToGamut($normalized),
-        ];
     }
 
     // -------------------------------------------------------

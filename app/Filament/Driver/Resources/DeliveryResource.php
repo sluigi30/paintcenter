@@ -293,7 +293,10 @@ class DeliveryResource extends Resource
             $name  = e($item->product?->name ?: 'Paint');
             $color = $item->display_color ? ' · ' . e($item->display_color) : '';
             $size  = $item->size_volume ? ' · ' . e($item->size_volume) : '';
-            $hex   = $item->hex_code ?: ($item->custom_hex ?: '#cccccc');
+            // A tint recipe's hex_code is the BASE's own colour (white); the
+            // can in the box is the mixed one.
+            $hex   = ($item->is_recipe ? $item->custom_hex : null)
+                ?: $item->hex_code ?: ($item->custom_hex ?: '#cccccc');
 
             $html .= <<<HTML
                 <div style="display:flex;align-items:center;gap:.6rem;padding:.35rem 0;border-bottom:1px solid rgba(128,128,128,.18)">

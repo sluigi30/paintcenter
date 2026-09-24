@@ -23,6 +23,7 @@ class OrderItem extends Model
         'mix_group',          // snapshot: ties this line to its recipe
         'mix_role',           // snapshot: 'base' | 'tint'
         'mix_liters',         // snapshot: litres in ONE can of this line
+        'mix_recipe',         // snapshot: [{tint_color_id, name, hex, ml}] per can
         'quantity',           //   rewrite what was actually charged
         'unit_price',
         'subtotal',
@@ -31,6 +32,7 @@ class OrderItem extends Model
     protected $casts = [
         'tint_fee' => 'float',
         'mix_liters' => 'float',
+        'mix_recipe' => 'array',
     ];
 
     /**
@@ -40,7 +42,7 @@ class OrderItem extends Model
      * Buy Again. CartItem has the same accessor but does not append it —
      * CartController composes that payload by hand.
      */
-    protected $appends = ['is_custom', 'is_mixed', 'color_label', 'display_color'];
+    protected $appends = ['is_custom', 'is_mixed', 'is_recipe', 'color_label', 'display_color'];
 
     public function getIsCustomAttribute(): bool
     {
@@ -51,6 +53,12 @@ class OrderItem extends Model
     public function getIsMixedAttribute(): bool
     {
         return $this->mix_group !== null;
+    }
+
+    /** A tint-recipe mix: one base can with the colorant in mix_recipe. */
+    public function getIsRecipeAttribute(): bool
+    {
+        return $this->mix_recipe !== null;
     }
 
     /** "Burnt Sienna (B-1408)" for a ready-mixed line, the customer's label for a custom one. */

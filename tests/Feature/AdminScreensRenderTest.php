@@ -125,6 +125,8 @@ class AdminScreensRenderTest extends TestCase
             'brand create'     => ['/admin/brands/create'],
             'categories list'  => ['/admin/categories'],
             'category create'  => ['/admin/categories/create'],
+            'tint colors list' => ['/admin/tint-colors'],
+            'tint color create' => ['/admin/tint-colors/create'],
             'reports'          => ['/admin/reports'],
             // Activity logs are super-admin only and untouched by this change.
         ];

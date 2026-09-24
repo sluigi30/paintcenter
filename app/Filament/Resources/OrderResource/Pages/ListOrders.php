@@ -4,7 +4,6 @@ namespace App\Filament\Resources\OrderResource\Pages;
 
 use App\Filament\Resources\OrderResource;
 use App\Models\Order;
-use Filament\Actions\CreateAction;
 use Filament\Resources\Pages\ListRecords;
 use Filament\Schemas\Components\Tabs\Tab;
 use Illuminate\Database\Eloquent\Builder;
@@ -15,13 +14,6 @@ class ListOrders extends ListRecords
 
     /** Everything still moving through the shop — the day-to-day work list. */
     private const ACTIVE_STATUSES = ['pending', 'processing', 'shipped', 'ready_for_pickup'];
-
-    protected function getHeaderActions(): array
-    {
-        return [
-            CreateAction::make(),
-        ];
-    }
 
     /**
      * Orders are split into three views rather than one long mixed list:

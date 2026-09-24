@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use App\Services\TintRecipe;
 use Illuminate\Database\Eloquent\Model;
 
 class CartItem extends Model
@@ -11,23 +12,26 @@ class CartItem extends Model
         'product_id',
         'product_variant_id',
         'quantity',
-        'custom_hex',         // set => this line is a custom-tinted colour
+        'custom_hex',         // a tint recipe's predicted colour
         'custom_color_name',  // the customer's own label, optional
-        'tint_fee',           // copied from the variant at add time
-        'mix_group',          // set => this line is one ingredient of a mix
-        'mix_role',           // 'base' | 'tint'
-        'mix_liters',         // litres in ONE can; line total is quantity * this
+        'tint_fee',           // display copy of the mixing fee; see TintRecipe::fee()
+        'mix_recipe',         // set => a tint-recipe mix: [{tint_color_id, name, hex, ml}] per can
     ];
 
     protected $casts = [
         'tint_fee' => 'float',
-        'mix_liters' => 'float',
+        'mix_recipe' => 'array',
     ];
 
-    /** What the customer pays per can — base price plus the tint. */
+    /**
+     * What the customer pays per can — base price plus the tint. A tint recipe
+     * pays the CURRENT mixing fee; see TintRecipe::fee().
+     */
     public function getUnitPriceAttribute(): float
     {
-        return (float) $this->variant->price + (float) $this->tint_fee;
+        $fee = $this->mix_recipe !== null ? TintRecipe::fee() : 0.0;
+
+        return (float) $this->variant->price + $fee;
     }
 
     public function getIsCustomAttribute(): bool
@@ -35,10 +39,12 @@ class CartItem extends Model
         return $this->custom_hex !== null;
     }
 
-    /** Part of a customer-composed mix, rather than a can bought on its own. */
-    public function getIsMixedAttribute(): bool
+    /**
+     * A tint-recipe mix: ONE line, the base can with colorant added.
+     */
+    public function getIsRecipeAttribute(): bool
     {
-        return $this->mix_group !== null;
+        return $this->mix_recipe !== null;
     }
 
     public function product()

@@ -14,6 +14,7 @@ use App\Services\AdminOrderAlertService;
 use App\Services\OrderCancellationService;
 use App\Services\OrderMessageService;
 use App\Services\SmsService;
+use App\Services\TintRecipe;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
@@ -85,27 +86,16 @@ class OrderController extends Controller
             ], 422);
         }
 
-        // A mix checks out whole, or not at all.
-        //
-        // Partial checkout lets the client tick individual lines, and a mix is
-        // several of them. Ticking the base without its colourants would order
-        // a can of plain paint against a swatch of the mixed colour: the
-        // customer pays for one thing and is handed another. The selection is
-        // refused rather than quietly widened, because charging for cans that
-        // were not ticked is its own kind of wrong.
-        if ($selectedIds) {
-            $groups = $cartItems->pluck('mix_group')->filter()->unique();
-
-            foreach ($groups as $group) {
-                $wholeMix = CartItem::where('user_id', $request->user()->id)
-                    ->where('mix_group', $group)
-                    ->count();
-
-                if ($wholeMix !== $cartItems->where('mix_group', $group)->count()) {
-                    return response()->json([
-                        'message' => 'A mixed colour has to be ordered together with every paint that goes into it. Select the whole mix, or leave it for next time.',
-                    ], 422);
-                }
+        // A tint recipe is re-checked for what may have gone away since it was
+        // carted: the base, and every colorant in it. Refused whole, cart left
+        // intact, nothing substituted — the customer edits their mix. Step and
+        // cap are NOT re-checked; see TintRecipe.
+        foreach ($cartItems->whereNotNull('mix_recipe') as $recipeLine) {
+            if ($error = TintRecipe::checkoutError($recipeLine)) {
+                return response()->json([
+                    'message' => $error,
+                    'cart_item_id' => $recipeLine->id,
+                ], 422);
             }
         }
 
@@ -131,7 +121,8 @@ class OrderController extends Controller
                 // unit_price is the ALL-IN price per can: the base plus the
                 // tint. tint_fee is carried alongside only so the breakdown
                 // can be shown — adding the two again would double-charge.
-                $tintFee = (float) $cartItem->tint_fee;
+                // A tint recipe pays the mixing fee as of NOW, like the price.
+                $tintFee = $cartItem->mix_recipe !== null ? TintRecipe::fee() : 0.0;
                 $unitPrice = $variant->price + $tintFee;
                 $subtotal = $unitPrice * $quantity;
                 $totalAmount += $subtotal;
@@ -144,12 +135,9 @@ class OrderController extends Controller
                     'custom_hex' => $cartItem->custom_hex,
                     'custom_color_name' => $cartItem->custom_color_name,
                     'tint_fee' => $tintFee,
-                    // The recipe travels with the order. Without it the
-                    // counter receives a list of cans and no instruction to
-                    // pour them together.
-                    'mix_group' => $cartItem->mix_group,
-                    'mix_role' => $cartItem->mix_role,
-                    'mix_liters' => $cartItem->mix_liters,
+                    // The recipe travels with the order: it is the counter's
+                    // instruction for what goes in the can.
+                    'mix_recipe' => $cartItem->mix_recipe,
                 ];
             }
 
@@ -219,9 +207,9 @@ class OrderController extends Controller
                     'custom_hex' => $item['custom_hex'],
                     'custom_color_name' => $item['custom_color_name'],
                     'tint_fee' => $item['tint_fee'],
-                    'mix_group' => $item['mix_group'],
-                    'mix_role' => $item['mix_role'],
-                    'mix_liters' => $item['mix_liters'],
+                    // Snapshot: names, hexes and ml as bought. A preset edited
+                    // or archived later must not rewrite this order.
+                    'mix_recipe' => $item['mix_recipe'],
                     'quantity' => $item['quantity'],
                     'unit_price' => $item['unit_price'],
                     'subtotal' => $item['subtotal'],

@@ -36,21 +36,6 @@ class ProductResource extends Resource
 
     protected static ?string $recordTitleAttribute = 'name';
 
-    /**
-     * Which base a can holds, for custom-colour products. '' means the paint
-     * line makes no base distinction. The app derives the required base from
-     * the customer's colour and matches it against this — see ColorService.
-     */
-    public const BASE_LABELS = [
-        '' => 'Not a base',
-        'P' => 'Pastel base — light, muted colours',
-        'M' => 'Medium base — mid tones',
-        'D' => 'Deep base — dark or saturated colours',
-    ];
-
-    /** Short forms, for the repeater row headings. */
-    public const BASE_SHORT = ['' => '', 'P' => 'Pastel', 'M' => 'Medium', 'D' => 'Deep'];
-
     public static function form(Schema $schema): Schema
     {
         return $schema->components([
@@ -86,12 +71,12 @@ class ProductResource extends Resource
                 ->label('Description')
                 ->helperText('What the paint is for — surfaces, finish, coverage. Not the name.'),
 
-            // A custom-colour product is a real SKU: its variants are cans of
-            // untinted BASE on the shelf, and the colour is chosen by the
-            // customer at order time. See CUSTOM_COLOR.md.
-            Toggle::make('is_custom_color')
-                ->label('Customer chooses the colour')
-                ->helperText('For untinted base paint mixed to order. The colour fields below do not apply — each order carries its own colour.')
+            // Base cans for the mixing bench. They are stocked and priced like
+            // any paint, but never listed in the catalogue — a customer buys
+            // one only with a tint recipe in it. See MIXING.md.
+            Toggle::make('is_mixing_base')
+                ->label('Mixing base (hidden from the catalogue)')
+                ->helperText('Sold only on the app\'s mixing screen, with the customer\'s colorant added. Each row picks its base type (White, Pastel, Deep…), which sets the preview colour and how strongly colour shows in it.')
                 ->live()
                 ->columnSpanFull(),
 
@@ -111,8 +96,8 @@ class ProductResource extends Resource
                 ->helperText('Up to 8 images. Drag to reorder — the first image is the cover shown in lists and the cart.')
                 ->columnSpanFull(),
 
-            // One row per CAN on the shelf: a colour, in a size, and for
-            // custom-colour lines in a base. Price and stock sit here because
+            // One row per CAN on the shelf: a colour, in a size (on a mixing
+            // base, the colour name says which base). Price and stock sit here because
             // that is where they actually differ. Stock is set here only on
             // creation — afterwards every movement goes through Inventory,
             // which audit-trails it.
@@ -133,36 +118,38 @@ class ProductResource extends Resource
                 ->addActionLabel('Add color / size')
                 ->itemLabel(function (array $state) {
                     $code = trim((string) ($state['color_code'] ?? ''));
-                    $name = trim((string) ($state['color_name'] ?? ''));
+                    $name = ! empty($state['base_type'])
+                        ? (\App\Models\ProductVariant::baseTypeOptions()[$state['base_type']] ?? '')
+                        : trim((string) ($state['color_name'] ?? ''));
                     $color = $name !== '' && $code !== '' ? "{$name} ({$code})" : ($name !== '' ? $name : $code);
 
-                    $base = ($state['base_code'] ?? '') !== ''
-                        ? ' · '.(self::BASE_SHORT[$state['base_code']] ?? $state['base_code'])
-                        : '';
-
                     return trim(
-                        ($color !== '' ? $color.' · ' : '').($state['size_volume'] ?? '').$base
+                        ($color !== '' ? $color.' · ' : '').($state['size_volume'] ?? '')
                     ) ?: null;
                 })
-                // A size may legitimately appear once PER COLOUR and per base —
-                // 4L Burnt Sienna, 4L White and 4L pastel base are different
-                // cans. So uniqueness is on the whole combination, which
-                // ->distinct() on a single column cannot express: it would
-                // reject the second row outright.
+                // A size may legitimately appear once PER COLOUR — 4L Burnt
+                // Sienna, 4L White and a 4L Pastel Base are different cans. So
+                // uniqueness is on the whole combination, which ->distinct() on
+                // a single column cannot express: it would reject the second
+                // row outright.
                 ->rules([
                     fn () => function (string $attribute, $value, \Closure $fail) {
                         $seen = [];
 
                         foreach ((array) $value as $row) {
+                            // A typed base is identified by its type — its
+                            // name is set from it on save, so the name field
+                            // is not what the admin chose.
                             $key = implode('|', [
                                 Product::normalizeColorCode($row['color_code'] ?? null) ?? '',
-                                trim((string) ($row['color_name'] ?? '')),
+                                ! empty($row['base_type'])
+                                    ? 'type:'.$row['base_type']
+                                    : trim((string) ($row['color_name'] ?? '')),
                                 $row['size_volume'] ?? '',
-                                $row['base_code'] ?? '',
                             ]);
 
                             if (isset($seen[$key])) {
-                                $fail('Each colour can only be listed once per size and base.');
+                                $fail('Each colour can only be listed once per size.');
 
                                 return;
                             }
@@ -172,24 +159,39 @@ class ProductResource extends Resource
                     },
                 ])
                 ->schema([
+                    // A mixing base is chosen by TYPE, never by typing a hex:
+                    // the type fixes its preview colour, how strongly colorant
+                    // shows in it, and its default capacity — all calibrated
+                    // in one place, config/paint.php "base_types". A hand-typed
+                    // hex could not say that a deep base makes colour deeper.
+                    Select::make('base_type')
+                        ->label('Base type')
+                        ->options(fn () => \App\Models\ProductVariant::baseTypeOptions())
+                        ->required(fn ($get) => (bool) $get('../../is_mixing_base'))
+                        ->visible(fn ($get) => (bool) $get('../../is_mixing_base'))
+                        ->live()
+                        ->columnSpan(2)
+                        ->helperText('Sets the preview colour and how colour shows in this base. White for light colours; Deep or Accent for strong ones.'),
+
                     TextInput::make('color_name')
                         ->label('Color Name')
                         ->placeholder('e.g. Burnt Sienna')
                         ->maxLength(100)
                         ->columnSpan(2)
-                        ->hidden(fn ($get) => $get('../../is_custom_color'))
+                        ->hidden(fn ($get) => (bool) $get('../../is_mixing_base'))
                         ->helperText('Leave both colour fields empty for products sold in no particular colour — thinners, tools.'),
 
                     TextInput::make('color_code')
                         ->label('Color Code')
                         ->placeholder('e.g. B-1408')
                         ->maxLength(40)
-                        ->hidden(fn ($get) => $get('../../is_custom_color'))
+                        ->hidden(fn ($get) => (bool) $get('../../is_mixing_base'))
                         ->helperText('The manufacturer\'s code on the can / shade card.'),
 
+                    // Not on a base row: the base TYPE sets its colour.
                     ColorPicker::make('hex_code')
                         ->label('Screen Preview')
-                        ->hidden(fn ($get) => $get('../../is_custom_color'))
+                        ->hidden(fn ($get) => (bool) $get('../../is_mixing_base'))
                         ->helperText('Approximate only — the code and name are the paint\'s real identity.'),
 
                     // Sits under the picker of THIS row and writes into it: the
@@ -202,7 +204,7 @@ class ProductResource extends Resource
                         ->hiddenLabel()
                         ->dehydrated(false)
                         ->columnSpanFull()
-                        ->hidden(fn ($get) => $get('../../is_custom_color')),
+                        ->hidden(fn ($get) => (bool) $get('../../is_mixing_base')),
 
                     TextInput::make('size_volume')
                         ->label('Size / Volume')
@@ -210,17 +212,28 @@ class ProductResource extends Resource
                         ->required()
                         ->maxLength(30),
 
-                    // Which base this can holds. Light colours need plenty of
-                    // white, dark saturated ones need almost none — the app
-                    // works this out from the customer's colour and matches it
-                    // against this field, so it must be right.
-                    Select::make('base_code')
-                        ->label('Base')
-                        ->options(self::BASE_LABELS)
-                        ->default('')
-                        ->required()
-                        ->visible(fn ($get) => $get('../../is_custom_color'))
-                        ->helperText('Leave as "Not a base" if this paint line has only one base.'),
+                    // The number behind size_volume. Filled from the size on
+                    // save when left blank; on a base it caps the colorant
+                    // (ml per litre x litres), so it is shown and required.
+                    TextInput::make('volume_liters')
+                        ->label('Volume (litres)')
+                        ->numeric()
+                        ->minValue(0.001)
+                        ->suffix('L')
+                        ->visible(fn ($get) => (bool) $get('../../is_mixing_base'))
+                        ->required(fn ($get) => (bool) $get('../../is_mixing_base'))
+                        ->helperText('Litres in one can, e.g. 4 for a 4L can. Used to limit how much colorant fits.'),
+
+                    TextInput::make('max_tint_ml_per_liter')
+                        ->label('Max colorant')
+                        ->numeric()
+                        ->minValue(1)
+                        ->maxValue(9999)
+                        ->suffix('ml per L')
+                        ->placeholder(fn ($get) => (string) (config('paint.mix.base_types.'.$get('base_type').'.max_tint_ml_per_liter')
+                            ?? config('paint.mix.default_max_tint_ml_per_liter')))
+                        ->visible(fn ($get) => (bool) $get('../../is_mixing_base'))
+                        ->helperText('Leave blank for the base type\'s default. Fill in only if the can says otherwise.'),
 
                     TextInput::make('price')
                         ->label('Price')
@@ -228,15 +241,6 @@ class ProductResource extends Resource
                         ->numeric()
                         ->minValue(0)
                         ->prefix('₱'),
-
-                    TextInput::make('tint_fee')
-                        ->label('Tint Fee')
-                        ->numeric()
-                        ->minValue(0)
-                        ->default(0)
-                        ->prefix('₱')
-                        ->visible(fn ($get) => $get('../../is_custom_color'))
-                        ->helperText('Charged on top of the price when this can is mixed.'),
 
                     TextInput::make('stock')
                         ->label('Initial Stock')
@@ -282,10 +286,10 @@ class ProductResource extends Resource
                 TextColumn::make('colors')
                     ->label('Colors')
                     ->badge()
-                    ->color(fn (Product $record) => $record->is_custom_color ? 'info' : 'gray')
+                    ->color(fn (Product $record) => $record->is_mixing_base ? 'info' : 'gray')
                     ->state(function (Product $record) {
-                        if ($record->is_custom_color) {
-                            return ['Custom colour'];
+                        if ($record->is_mixing_base) {
+                            return ['Mixing base'];
                         }
 
                         $colors = collect($record->colors);
@@ -297,8 +301,8 @@ class ProductResource extends Resource
                             : $colors->pluck('label')->all();
                     })
                     ->placeholder('—')
-                    ->tooltip(fn (Product $record) => $record->is_custom_color
-                        ? 'Mixed to the customer\'s chosen colour'
+                    ->tooltip(fn (Product $record) => $record->is_mixing_base
+                        ? 'Hidden from the catalogue — sold only on the mixing screen'
                         : (collect($record->colors)->pluck('label')->implode(', ') ?: null)),
                 // One badge per DISTINCT size, e.g. [1L] [4L] [16L]. Reading
                 // it off the relation gave a badge per variant, so a line in
@@ -358,6 +362,13 @@ class ProductResource extends Resource
                             ->whereColumn('stock', '<=', 'low_stock_threshold')),
                         default => $query,
                     }),
+
+                SelectFilter::make('is_mixing_base')
+                    ->label('Type')
+                    ->options([
+                        '0' => 'Catalogue products',
+                        '1' => 'Mixing bases',
+                    ]),
 
                 SelectFilter::make('brand')
                     ->relationship('brand', 'brand_name'),

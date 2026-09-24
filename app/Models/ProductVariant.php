@@ -11,11 +11,12 @@ use Illuminate\Database\Eloquent\Model;
 /**
  * One purchasable CAN of a product — "BOYSEN Latex Colors, Burnt Sienna (4L)".
  *
- * A variant is a (colour × size × base) combination. Price, stock, and the
+ * A variant is a (colour × size) combination. Price, stock, and the
  * low-stock threshold live HERE, not on Product: a 4L of Burnt Sienna and a
  * 1L of it are separate things on the shelf, and so are two shades of the
  * same size. Colour is '' on products sold in no particular colour (thinners,
- * tools) and on custom-colour lines, where the customer picks it at order time.
+ * tools). On a mixing base the colour NAME says which base the can is
+ * ("White Base", "Deep Base") and hex_code is the base's own colour.
  */
 #[ObservedBy(ProductVariantObserver::class)]
 class ProductVariant extends Model
@@ -40,10 +41,10 @@ class ProductVariant extends Model
         'color_name',  // manufacturer name, e.g. "Burnt Sienna"; '' = unnamed
         'hex_code',    // screen preview only — never a colour measurement
         'size_volume',
-        'base_code',   // '' = no base distinction; 'P' pastel, 'M' medium, 'D' deep
+        'volume_liters', // litres in one can, as a number; see $liters
+        'base_type',   // mixing bases only: a key of config('paint.mix.base_types')
         'price',
-        'tint_fee',    // charged on top of price when this can is tinted
-        'tint_strength', // mix-prediction calibration; see ColorService::mix()
+        'max_tint_ml_per_liter', // mixing bases only; null = config default
         'stock',
         'low_stock_threshold',
         'is_archived',
@@ -51,8 +52,8 @@ class ProductVariant extends Model
 
     protected $casts = [
         'price' => 'float',
-        'tint_fee' => 'float',
-        'tint_strength' => 'float',
+        'volume_liters' => 'float',
+        'max_tint_ml_per_liter' => 'float',
         'stock' => 'integer',
         'is_archived' => 'boolean',
     ];
@@ -68,6 +69,43 @@ class ProductVariant extends Model
     public function setColorCodeAttribute(?string $value): void
     {
         $this->attributes['color_code'] = Product::normalizeColorCode($value) ?? '';
+    }
+
+    /**
+     * Keep volume_liters honest. It is filled from size_volume when empty, and
+     * RE-derived when the size changes without the volume changing with it —
+     * otherwise a can re-labelled from "1L" to "4L" keeps capping its tint at
+     * one litre's worth. An explicit volume in the same save always wins.
+     *
+     * A new size that carries no number ("Gallon") leaves the volume alone.
+     * Clearing it would wipe a correct 3.785 — and the admin form resubmits an
+     * unchanged volume, which is not dirty, so a base would lose its volume
+     * AFTER the form had validated it as required.
+     */
+    protected static function booted(): void
+    {
+        // A typed base takes its preview colour and its name from the type.
+        // They are never typed by hand: a deep base given a bright white hex
+        // would preview every mix in it wrongly, with nothing to show why.
+        static::saving(function (self $variant) {
+            if ($type = $variant->baseType()) {
+                $variant->hex_code = $type['hex'];
+                $variant->color_name = $type['label'];
+                $variant->color_code = '';
+            }
+        });
+
+        static::saving(function (self $variant) {
+            $sizeChanged = $variant->isDirty('size_volume') && ! $variant->isDirty('volume_liters');
+
+            if ($variant->volume_liters === null || $sizeChanged) {
+                $parsed = $variant->parsedLiters();
+
+                if ($parsed !== null) {
+                    $variant->volume_liters = round($parsed, 3);
+                }
+            }
+        });
     }
 
     public function setColorNameAttribute(?string $value): void
@@ -140,17 +178,72 @@ class ProductVariant extends Model
 
     /**
      * How much paint is in ONE can of this variant, in litres. Null when
-     * size_volume says nothing measurable ("Set of 3", "Large").
+     * nothing measurable is known ("Set of 3", "Large").
      *
-     * size_volume is free text the admin types, so this matches rather than
-     * parses — including the word "pint", which is a can size here and not a
-     * number. The value lives in config/paint.php because a pint is 0.473 L
-     * in the US and 0.568 L imperial, and the shop's cans decide which.
+     * The stored volume_liters wins: it is a number the admin confirmed. The
+     * size_volume parse is only the fallback for rows nobody has filled in.
      *
-     * Used to weight the mix prediction and to state the recipe on the
-     * counter's sheet. NOT used for stock, which counts cans.
+     * Used to weight the mix prediction, to cap the tint a base accepts, and to
+     * state the recipe on the counter's sheet. NOT used for stock, which
+     * counts cans.
      */
     public function getLitersAttribute(): ?float
+    {
+        return $this->volume_liters ?? $this->parsedLiters();
+    }
+
+    /**
+     * The most colorant one can of this base accepts, in ml. Null when the
+     * can's volume is unknown — such a can cannot be a mixing base.
+     *
+     * The can's own figure wins (it is printed on the can); then its base
+     * type's default; then the global default.
+     */
+    public function maxTintMl(): ?float
+    {
+        $liters = $this->liters;
+
+        if ($liters === null) {
+            return null;
+        }
+
+        $perLiter = $this->max_tint_ml_per_liter
+            ?? ($this->baseType()['max_tint_ml_per_liter'] ?? null)
+            ?? (float) config('paint.mix.default_max_tint_ml_per_liter');
+
+        return round($perLiter * $liters, 1);
+    }
+
+    /** This can's base type from config, or null (not a typed base). */
+    public function baseType(): ?array
+    {
+        return $this->base_type ? (config('paint.mix.base_types')[$this->base_type] ?? null) : null;
+    }
+
+    /**
+     * How much harder colorant pulls in this base than in a white one — the
+     * multiplier on every colorant's K/S in the prediction. 1.0 for white and
+     * for anything untyped. See config/paint.php, "Base types".
+     */
+    public function tintResponse(): float
+    {
+        return (float) ($this->baseType()['tint_response'] ?? 1.0);
+    }
+
+    /** [key => label] for the admin's Base type select. */
+    public static function baseTypeOptions(): array
+    {
+        return array_map(fn ($t) => $t['label'], config('paint.mix.base_types'));
+    }
+
+    /**
+     * Litres read off the free-text size_volume. size_volume is typed by the
+     * admin, so this matches rather than parses — including the word "pint",
+     * which is a can size here and not a number. The value lives in
+     * config/paint.php because a pint is 0.473 L in the US and 0.568 L
+     * imperial, and the shop's cans decide which.
+     */
+    public function parsedLiters(): ?float
     {
         $raw = strtolower(trim((string) $this->size_volume));
 
@@ -177,22 +270,6 @@ class ProductVariant extends Model
             str_starts_with($unit, 'gal') => $n * 3.785411784,
             default => $n,
         };
-    }
-
-    /**
-     * Whether this can is a pint — the unit a customer adds colour by.
-     *
-     * Deliberately NOT a volume comparison against pint_liters: a 500ml can is
-     * within a rounding error of a pint and is still not one, and the recipe
-     * the counter reads has to name the can that is actually on the shelf.
-     * Not appended; the mix endpoint asks for it, no payload needs it.
-     */
-    public function getIsPintAttribute(): bool
-    {
-        return (bool) preg_match(
-            '/'.config('paint.mix.pint_pattern').'/i',
-            trim((string) $this->size_volume)
-        );
     }
 
     /** "Boysen — Latex Colors · Burnt Sienna (4L)" for alerts and admin modals. */

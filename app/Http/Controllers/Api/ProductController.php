@@ -48,37 +48,6 @@ class ProductController extends Controller
             $query->whereHas('categories', fn ($q) => $q->whereKey($request->category_id));
         }
 
-        // Products whose colour the customer chooses. Drives the "no sage
-        // green in stock — mix your own" recovery from an empty search, which
-        // matters because a custom-colour product has no color_name for the
-        // search above to match on.
-        if ($request->boolean('tintable')) {
-            $query->where('is_custom_color', true);
-        }
-
-        // Ingredients for a customer-composed mix.
-        //
-        //   mixable=tint   pint cans — what colour is ADDED by
-        //   mixable=base   any size  — what the mix is STARTED from
-        //
-        // Both need a hex_code: with no colour on file the mix cannot be
-        // previewed and the customer would be choosing blind. This is a
-        // convenience filter only — MixController re-checks every rule,
-        // because a request can name any variant id it likes. The pint
-        // pattern is shared with ProductVariant::$is_pint through config, so
-        // the list offered cannot drift from what the endpoint will accept.
-        if ($mixable = (string) $request->query('mixable', '')) {
-            $query->whereHas('variants', function ($v) use ($mixable) {
-                $v->where('is_archived', false)
-                    ->whereNotNull('hex_code')
-                    ->where('stock', '>', 0);
-
-                if ($mixable !== 'base') {
-                    $v->whereRaw('size_volume regexp ?', [config('paint.mix.pint_pattern')]);
-                }
-            });
-        }
-
         // Price filters match if ANY active size falls in the range
         if ($request->has('min_price')) {
             $query->whereHas('variants', fn ($q) => $q
@@ -101,7 +70,10 @@ class ProductController extends Controller
     {
         // Block archived products; out-of-stock sizes are still listed so
         // the app can show them as disabled options.
-        if ($product->is_archived || $product->variants()->where('is_archived', false)->count() === 0) {
+        // A mixing base has no product page: it is chosen on the bench, and a
+        // page for it would offer untinted base as if it were finished paint.
+        if ($product->is_archived || $product->is_mixing_base
+            || $product->variants()->where('is_archived', false)->count() === 0) {
             return response()->json(['message' => 'Product not available.'], 404);
         }
 

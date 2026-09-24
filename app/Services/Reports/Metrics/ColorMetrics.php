@@ -19,12 +19,18 @@ use App\Services\Reports\ReportPeriod;
  *   FACTORY shades come off the shelf, identified by the manufacturer's
  *   colour code and name — the identity customers order by.
  *
- *   CUSTOM MIXES are tinted at the counter. A mix is several order lines (a
- *   base can plus the tints poured in) sharing a mix_group, and each line
- *   carries the predicted result colour. Its revenue is counted ONCE for the
+ *   CUSTOM MIXES are tinted at the counter. A TINT RECIPE (current) is one
+ *   order line: a base can with colorant in `mix_recipe`, its predicted colour
+ *   in custom_hex. An older PINT MIX is several lines (a base can plus the
+ *   pints poured in) sharing a mix_group; its revenue is counted ONCE for the
  *   whole mix and its quantity is the number of finished cans — see the
- *   roll-up rule in ReportMeasure. Counting the base and each tint as separate
- *   sellers would put colourant at the top of the colour report.
+ *   roll-up rule in ReportMeasure. Counting the base and each tint as
+ *   separate sellers would put colourant at the top of the colour report.
+ *
+ * Plus COLORANT USE: millilitres of each preset poured into the period's tint
+ * recipes (ml per can × cans). Colorant is not stocked, so this is the only
+ * place the owner can see what is running down and needs reordering. Summed
+ * in PHP rather than with JSON_TABLE, which MySQL has and SQLite does not.
  */
 class ColorMetrics extends Metric
 {
@@ -50,6 +56,8 @@ class ColorMetrics extends Metric
                 'order_items.custom_color_name',
                 'SUM(order_items.subtotal) as revenue',
                 'SUM(order_items.quantity) as quantity',
+                // Tint recipes are one line each, so each LINE is one mix.
+                'SUM(CASE WHEN order_items.mix_recipe IS NOT NULL THEN 1 ELSE 0 END) as recipe_lines',
             ]))
             ->groupBy(
                 'order_items.mix_group',
@@ -96,6 +104,8 @@ class ColorMetrics extends Metric
             if (! empty($row['mix_group'])) {
                 $groups[$segment][$identity]['mixes']++;
             }
+
+            $groups[$segment][$identity]['mixes'] += (int) ($row['recipe_lines'] ?? 0);
         }
 
         $factory = $groups['factory'];
@@ -113,7 +123,42 @@ class ColorMetrics extends Metric
             'custom_share' => $total > 0 ? round(($customRevenue / $total) * 100, 1) : 0.0,
             'distinct_shades' => count($factory),
             'distinct_mixes' => count($custom),
+            'colorants' => $this->colorants($period),
         ];
+    }
+
+    /**
+     * Millilitres of each colorant poured in the period, most used first. Read
+     * off the order lines' SNAPSHOT, so a preset renamed since is reported
+     * under the name it had when it was poured — grouped by id, labelled with
+     * the latest name seen.
+     *
+     * @return array<int,array{tint_color_id:int,label:string,hex:?string,ml:float,mixes:int}>
+     */
+    private function colorants(ReportPeriod $period): array
+    {
+        $used = [];
+
+        ReportMeasure::lineItems($period)
+            ->whereNotNull('order_items.mix_recipe')
+            ->select(['order_items.mix_recipe', 'order_items.quantity'])
+            ->orderBy('order_items.id')
+            ->each(function ($line) use (&$used) {
+                foreach ($line->mix_recipe ?? [] as $row) {
+                    $id = (int) ($row['tint_color_id'] ?? 0);
+
+                    $used[$id] ??= ['tint_color_id' => $id, 'label' => '', 'hex' => null, 'ml' => 0.0, 'mixes' => 0];
+                    $used[$id]['label'] = (string) ($row['name'] ?? 'Colorant');
+                    $used[$id]['hex'] = $row['hex'] ?? null;
+                    $used[$id]['ml'] += (float) ($row['ml'] ?? 0) * (int) $line->quantity;
+                    $used[$id]['mixes']++;
+                }
+            });
+
+        $used = array_values($used);
+        usort($used, fn ($a, $b) => $b['ml'] <=> $a['ml']);
+
+        return array_map(fn ($r) => ['ml' => round($r['ml'], 1)] + $r, $used);
     }
 
     /** "Burnt Sienna (B-1408)" for a factory shade, the customer's label for a mix. */

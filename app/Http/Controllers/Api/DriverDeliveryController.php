@@ -251,7 +251,9 @@ class DriverDeliveryController extends Controller
                 'name'     => $item->product?->name,
                 'color'    => $item->display_color,
                 'size'     => $item->size_volume,
-                'hex'      => $item->hex_code ?: $item->custom_hex,
+                // A tint recipe's hex_code is the untinted base; show the mix.
+                'hex'      => ($item->is_recipe ? $item->custom_hex : null)
+                    ?: $item->hex_code ?: $item->custom_hex,
             ])->all(),
         ];
     }

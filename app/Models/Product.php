@@ -34,20 +34,35 @@ class Product extends Model
         'brand_id',
         'name',         // the product line, e.g. "BOYSEN Latex Colors"
         'description',
-        // Colour is chosen by the CUSTOMER, not stocked. Variants of such a
-        // product are cans of untinted base — see CUSTOM_COLOR.md.
-        'is_custom_color',
+        // Base paint sold ONLY through the mixing bench, never listed in the
+        // catalogue. Its variants are the base cans; see MIXING.md.
+        'is_mixing_base',
         'images',       // ordered gallery; first entry is the cover
         'is_archived',
     ];
 
     protected $casts = [
         'is_archived' => 'boolean',
-        'is_custom_color' => 'boolean',
+        'is_mixing_base' => 'boolean',
         'images' => 'array',
     ];
 
     protected $appends = ['image', 'colors', 'size_volume', 'price', 'stock', 'is_low_stock', 'stock_status'];
+
+    /**
+     * A product switched OFF "mixing base" stops typing its cans. Otherwise a
+     * leftover base_type would keep overwriting each can's colour and name on
+     * every save (ProductVariant::booted) — a finished paint forced to read
+     * "White Base" with no field on the form to say why.
+     */
+    protected static function booted(): void
+    {
+        static::saved(function (self $product) {
+            if (! $product->is_mixing_base) {
+                $product->variants()->whereNotNull('base_type')->update(['base_type' => null]);
+            }
+        });
+    }
 
     // -------------------------------------------------------
     // Relationships
@@ -132,8 +147,7 @@ class Product extends Model
      * "White" and "Off-White" into one chip. `hex_code` is a screen preview
      * taken from the first variant of the colour; it identifies nothing.
      *
-     * Empty for an uncoded product (thinners, tools) and for a custom-colour
-     * one, where the colour is the customer's to choose.
+     * Empty for an uncoded product (thinners, tools).
      */
     public function getColorsAttribute(): array
     {
@@ -248,12 +262,28 @@ class Product extends Model
             ->where('stock', 0));
     }
 
-    /** Products a customer can buy right now. */
+    /**
+     * Products a customer can buy from the catalogue right now.
+     *
+     * Mixing bases are excluded: a can of untinted base is not something to
+     * put on a wall, and the bench is the only place it is sold. Every
+     * catalogue surface (list, brand grid, category chips) goes through here,
+     * so excluding them once hides them everywhere.
+     */
     public function scopePurchasable($query)
     {
         return $query->where('is_archived', false)
+            ->where('is_mixing_base', false)
             ->whereHas('variants', fn ($q) => $q
                 ->where('is_archived', false)
                 ->where('stock', '>', 0));
+    }
+
+    /** Active base products with at least one active variant — what the bench offers. */
+    public function scopeMixingBases($query)
+    {
+        return $query->where('is_archived', false)
+            ->where('is_mixing_base', true)
+            ->whereHas('variants', fn ($q) => $q->where('is_archived', false));
     }
 }

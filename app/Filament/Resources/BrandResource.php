@@ -75,7 +75,8 @@ class BrandResource extends Resource
                     ->options([
                         '0' => 'Active only',
                         '1' => 'Archived only',
-                    ]),
+                    ])
+                    ->default('0'),
             ])
             ->actions([
                 \Filament\Actions\EditAction::make(),
